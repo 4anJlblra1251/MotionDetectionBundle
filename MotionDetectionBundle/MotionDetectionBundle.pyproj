@@ -31,6 +31,7 @@
   <ItemGroup>
     <Content Include=".gitignore" />
     <Content Include="App\config.json" />
+    <Content Include="requirements.txt" />
     <Content Include="Templates\index.html" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
