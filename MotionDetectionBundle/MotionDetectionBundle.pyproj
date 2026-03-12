@@ -4,7 +4,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>66c2e8a9-ebd7-4833-b808-3769501db096</ProjectGuid>
     <ProjectHome>.</ProjectHome>
-    <StartupFile>MotionDetectionBundle.py</StartupFile>
+    <StartupFile>App\app.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
@@ -21,7 +21,17 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="MotionDetectionBundle.py" />
+    <Compile Include="App\app.py" />
+    <Compile Include="App\detector.py" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="App\" />
+    <Folder Include="Templates\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include=".gitignore" />
+    <Content Include="App\config.json" />
+    <Content Include="Templates\index.html" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in
