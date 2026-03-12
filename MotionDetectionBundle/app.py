@@ -1,9 +1,11 @@
 from flask import Flask, Response, render_template, jsonify, request
 from detector import MotionDetector
 import threading
+import argparse
+import time
 
 app = Flask(__name__)
-detector = MotionDetector("config.json")
+detector = None
 
 
 @app.route("/")
@@ -19,6 +21,7 @@ def video():
         while True:
             frame = detector.get_jpeg_frame(mode=mode)
             if frame is None:
+                time.sleep(0.05)
                 continue
 
             yield (
@@ -44,7 +47,29 @@ def config():
     return jsonify({"status": "ok"})
 
 
-if __name__ == "__main__":
+def main():
+    global detector
+
+    parser = argparse.ArgumentParser(description="Motion detection service")
+    parser.add_argument("--debug", action="store_true", help="run in debug mode with web UI")
+    args = parser.parse_args()
+
+    detector = MotionDetector("config.json", debug=args.debug)
+
     t = threading.Thread(target=detector.process_loop, daemon=True)
     t.start()
-    app.run(host="0.0.0.0", port=5000, debug=False)
+
+    if args.debug:
+        print("Запуск в режиме отладки")
+        app.run(host="0.0.0.0", port=5000, debug=False)
+    else:
+        print("Запуск в обычном режиме")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("Остановка")
+
+
+if __name__ == "__main__":
+    main()

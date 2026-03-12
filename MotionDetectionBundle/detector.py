@@ -5,8 +5,9 @@ import threading
 
 
 class MotionDetector:
-    def __init__(self, config_path="config.json"):
+    def __init__(self, config_path="config.json", debug=False):
         self.config_path = config_path
+        self.debug = debug
         self.lock = threading.Lock()
 
         self.last_frame = None
@@ -93,7 +94,7 @@ class MotionDetector:
                     cv2.CHAIN_APPROX_SIMPLE
                 )
 
-                debug_frame = frame.copy()
+                debug_frame = frame.copy() if self.debug else None
                 motion = False
                 max_area = 0
                 contours_count = len(contours)
@@ -106,17 +107,19 @@ class MotionDetector:
 
                     if area > self.config["min_area"]:
                         motion = True
-                        x, y, w, h = cv2.boundingRect(cnt)
-                        cv2.rectangle(debug_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                        cv2.putText(
-                            debug_frame,
-                            f"area={int(area)}",
-                            (x, max(20, y - 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.6,
-                            (0, 255, 0),
-                            2
-                        )
+
+                        if self.debug:
+                            x, y, w, h = cv2.boundingRect(cnt)
+                            cv2.rectangle(debug_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                            cv2.putText(
+                                debug_frame,
+                                f"area={int(area)}",
+                                (x, max(20, y - 10)),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.6,
+                                (0, 255, 0),
+                                2
+                            )
 
                 if motion:
                     self.motion_frames += 1
@@ -137,21 +140,26 @@ class MotionDetector:
                             f"motion_frames={self.motion_frames}"
                         )
 
-                cv2.putText(debug_frame, f"max_area={int(max_area)}", (10, 25),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(debug_frame, f"contours={contours_count}", (10, 55),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(debug_frame, f"motion_frames={self.motion_frames}", (10, 85),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(debug_frame, f"event={self.event_detected}", (10, 115),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                if self.debug:
+                    cv2.putText(debug_frame, f"max_area={int(max_area)}", (10, 25),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                    cv2.putText(debug_frame, f"contours={contours_count}", (10, 55),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                    cv2.putText(debug_frame, f"motion_frames={self.motion_frames}", (10, 85),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                    cv2.putText(debug_frame, f"event={self.event_detected}", (10, 115),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-                self.last_frame = frame
-                self.last_debug_frame = debug_frame
-                self.last_mask = mask
-                self.last_thresh = thresh
-                self.max_area = max_area
-                self.contours_count = contours_count
+                if self.debug:
+                    self.last_frame = frame
+                    self.last_debug_frame = debug_frame
+                    self.last_mask = mask
+                    self.last_thresh = thresh
+                else:
+                    self.last_frame = None
+                    self.last_debug_frame = None
+                    self.last_mask = None
+                    self.last_thresh = None
 
     def get_status(self):
         with self.lock:
