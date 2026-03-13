@@ -14,27 +14,27 @@ cd MotionDetectionBundle
 ## 2) Скопировать bundle на Raspberry Pi
 
 ```bash
-scp dist/motion-detection-rpi4.tar.gz pi@<raspberry-ip>:/tmp/
+scp dist/motion-detection-rpi4.tar.gz <user>@<raspberry-ip>:/tmp/
 ```
 
-На Raspberry Pi:
+## 3) Установить и запустить одним скриптом
 
 ```bash
-sudo mkdir -p /opt/motion-detection
-sudo tar -xzf /tmp/motion-detection-rpi4.tar.gz -C /opt
-sudo mv /opt/motion-detection-rpi4/* /opt/motion-detection/
+ssh <user>@<raspberry-ip> "curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<branch>/MotionDetectionBundle/deploy/install_rpi.sh | sudo bash -s -- /tmp/motion-detection-rpi4.tar.gz"
 ```
 
-## 3) Установить зависимости и systemd-сервис
+Если скрипт уже лежит на Raspberry Pi, можно запустить так:
 
 ```bash
-sudo /opt/motion-detection/deploy/install_rpi.sh
+sudo ./install_rpi.sh /tmp/motion-detection-rpi4.tar.gz
 ```
 
 Скрипт:
+- при необходимости сам распакует bundle в `/opt/motion-detection`;
 - ставит системные пакеты (`python3-opencv` и т.д.);
 - создаёт virtualenv в `/opt/motion-detection/.venv`;
 - ставит Python-зависимости из `requirements-rpi.txt`;
+- автоматически определяет пользователя для systemd (без жёсткой привязки к `pi`);
 - регистрирует и запускает `motion-detection.service`.
 
 ## 4) Управление сервисом
