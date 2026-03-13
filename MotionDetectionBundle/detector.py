@@ -263,8 +263,7 @@ class MotionDetector:
                 continue
 
             while self.running:
-                with silence_stderr():
-                    ret, frame = self.cap.read()
+                ret, frame = self.cap.read()
 
                 if not ret or frame is None:
                     self._enter_safety_mode("Frame read error")
