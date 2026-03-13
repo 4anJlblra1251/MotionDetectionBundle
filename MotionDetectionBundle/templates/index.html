@@ -2,14 +2,16 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <title>Motion Multi-Camera Panel</title>
+  <title>Motion {{ 'Setup' if setup_mode else 'Debug' }} Panel</title>
   <style>
     :root { --bg:#0f172a; --card:#111827; --card2:#1e293b; --text:#e5e7eb; --muted:#94a3b8; --accent:#22c55e; --accent2:#38bdf8; --danger:#ef4444; --warning:#f59e0b; --border:#334155; }
     body { font-family:Arial,sans-serif; margin:0; padding:20px; background:var(--bg); color:var(--text); }
     h1 { margin:0 0 12px 0; }
     .tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-    .tab { padding:8px 12px; border:1px solid var(--border); border-radius:999px; cursor:pointer; background:#0b1220; }
+    .tab-wrap { display:flex; align-items:center; gap:6px; }
+    .tab { padding:8px 12px; border:1px solid var(--border); border-radius:999px; cursor:pointer; background:#0b1220; color:var(--text); }
     .tab.active { background:var(--accent2); color:#08111d; font-weight:bold; }
+    .tab-delete { width:auto; margin-top:0; padding:8px 10px; background:var(--danger); color:white; border-radius:999px; }
     .layout { display:grid; grid-template-columns:2fr 1fr; gap:20px; align-items:start; }
     .card { background:linear-gradient(180deg,var(--card),var(--card2)); border:1px solid var(--border); border-radius:14px; padding:16px; }
     img { width:100%; border-radius:12px; border:1px solid var(--border); background:black; }
@@ -27,12 +29,12 @@
   </style>
 </head>
 <body>
-  <h1>Motion Detection: Multi Camera</h1>
+  <h1>{{ 'Motion Detection: Setup' if setup_mode else 'Motion Detection: Debug' }}</h1>
   <div class="tabs" id="cameraTabs"></div>
 
   {% if setup_mode %}
   <div class="card" style="margin-bottom:16px;">
-    <h3>Setup: добавить камеру</h3>
+    <h3>Setup: добавить/удалить камеру</h3>
     <div class="inline">
       <input id="new_camera_name" type="text" placeholder="Имя камеры">
       <button onclick="addCamera()">+ Добавить</button>
@@ -42,7 +44,8 @@
 
   <div class="layout">
     <div class="card">
-      <h2>Video</h2>
+      <h2>{{ 'Video' if debug_mode else 'Stream disabled in Setup mode' }}</h2>
+      {% if debug_mode %}
       <label for="mode">Display mode</label>
       <select id="mode" onchange="updateVideoMode()">
         <option value="debug">DEBUG</option>
@@ -52,6 +55,9 @@
       </select>
       <br><br>
       <img id="video" src="" alt="video stream">
+      {% else %}
+      <p class="hint">В режиме Setup поток видео отключён. Переключитесь в Debug для просмотра стрима.</p>
+      {% endif %}
       <div class="status-grid">
         <div class="status-item"><div class="label">Time</div><div class="value" id="current_time">-</div></div>
         <div class="status-item"><div class="label">RTSP</div><div class="value blue" id="rtsp_url">-</div></div>
@@ -89,6 +95,8 @@
   </div>
 
 <script>
+const setupMode = {{ 'true' if setup_mode else 'false' }};
+const debugMode = {{ 'true' if debug_mode else 'false' }};
 let currentCameraId = null;
 let cameras = [];
 
@@ -111,10 +119,22 @@ function toggleSettingsPanel(forceVisible = null) {
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'p' || event.key === 'P') {
-    event.preventDefault();
     toggleSettingsPanel();
   }
 });
+
+function resetStatus() {
+  document.getElementById('current_time').textContent = '-';
+  document.getElementById('rtsp_url').textContent = '-';
+  document.getElementById('camera_connected').textContent = 'NO CAMERA';
+  document.getElementById('camera_connected').className = 'value yellow';
+  document.getElementById('gpio_enabled_status').textContent = '-';
+  document.getElementById('gpio_state').textContent = '-';
+  document.getElementById('event_status').textContent = '-';
+  document.getElementById('event_detection_enabled').textContent = '-';
+  document.getElementById('last_event_time').textContent = '-';
+  document.getElementById('logs').textContent = 'No camera selected';
+}
 
 async function fetchCameras() {
   const res = await fetch('/api/cameras');
@@ -122,20 +142,45 @@ async function fetchCameras() {
   cameras = data.cameras || [];
 
   if (!currentCameraId) currentCameraId = data.active_camera;
-  if (!cameras.find(c => c.id === currentCameraId) && cameras.length) currentCameraId = cameras[0].id;
+  if (!cameras.find(c => c.id === currentCameraId)) {
+    currentCameraId = cameras.length ? cameras[0].id : null;
+  }
 
   const tabs = document.getElementById('cameraTabs');
   tabs.innerHTML = '';
   cameras.forEach(camera => {
+    const wrap = document.createElement('div');
+    wrap.className = 'tab-wrap';
+
     const btn = document.createElement('button');
     btn.className = 'tab' + (camera.id === currentCameraId ? ' active' : '');
     btn.textContent = camera.name;
     btn.onclick = () => switchCamera(camera.id);
-    tabs.appendChild(btn);
+    wrap.appendChild(btn);
+
+    if (setupMode) {
+      const delBtn = document.createElement('button');
+      delBtn.className = 'tab-delete';
+      delBtn.textContent = '✕';
+      delBtn.title = `Удалить ${camera.name}`;
+      delBtn.onclick = async () => removeCamera(camera.id, camera.name);
+      wrap.appendChild(delBtn);
+    }
+
+    tabs.appendChild(wrap);
   });
+
+  if (!currentCameraId) {
+    resetStatus();
+    if (debugMode) {
+      const video = document.getElementById('video');
+      if (video) video.src = '';
+    }
+  }
 }
 
 async function switchCamera(cameraId) {
+  if (!cameraId) return;
   currentCameraId = cameraId;
   await fetch('/api/active_camera', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -148,10 +193,17 @@ async function switchCamera(cameraId) {
 }
 
 async function fetchStatus() {
-  if (!currentCameraId) return;
+  if (!currentCameraId) {
+    resetStatus();
+    return;
+  }
+
   const res = await fetch('/api/status?camera_id=' + encodeURIComponent(currentCameraId));
   const data = await res.json();
-  if (data.error) return;
+  if (data.error) {
+    resetStatus();
+    return;
+  }
 
   document.getElementById('current_time').textContent = data.current_time;
   document.getElementById('rtsp_url').textContent = data.rtsp_url;
@@ -240,10 +292,40 @@ async function addCamera() {
   await switchCamera(currentCameraId);
 }
 
+async function removeCamera(cameraId, cameraName) {
+  if (!setupMode) return;
+  if (!confirm(`Удалить камеру "${cameraName}"?`)) return;
+
+  const res = await fetch('/api/cameras/' + encodeURIComponent(cameraId), { method: 'DELETE' });
+  const data = await res.json();
+  if (data.error) {
+    alert(data.error);
+    return;
+  }
+
+  currentCameraId = data.active_camera || null;
+  await fetchCameras();
+  if (currentCameraId) {
+    await switchCamera(currentCameraId);
+  } else {
+    resetStatus();
+    updateVideoMode();
+  }
+}
+
 function updateVideoMode() {
-  if (!currentCameraId) return;
-  const mode = document.getElementById('mode').value;
-  document.getElementById('video').src = '/video?camera_id=' + encodeURIComponent(currentCameraId) + '&mode=' + mode + '&_ts=' + Date.now();
+  if (!debugMode) return;
+  const video = document.getElementById('video');
+  const modeControl = document.getElementById('mode');
+  if (!video || !modeControl) return;
+
+  if (!currentCameraId) {
+    video.src = '';
+    return;
+  }
+
+  const mode = modeControl.value;
+  video.src = '/video?camera_id=' + encodeURIComponent(currentCameraId) + '&mode=' + mode + '&_ts=' + Date.now();
 }
 
 (async function init(){
