@@ -226,6 +226,9 @@ class MotionDetector:
             self.cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
         ok = self.cap.isOpened()
 
+        if not ok:
+            self.connection_ok = False
+
         if ok:
             self.add_log("RTSP opened")
         return ok

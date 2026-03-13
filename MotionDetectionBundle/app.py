@@ -5,6 +5,7 @@ import argparse
 import time
 import curses
 import json
+import os
 from copy import deepcopy
 
 app = Flask(__name__)
@@ -181,6 +182,7 @@ class MultiCameraManager:
         camera_rows = []
         warning_logs = []
         critical_logs = []
+        connected_cameras = 0
 
         for camera in cameras:
             detector = detectors.get(camera["id"])
@@ -190,6 +192,8 @@ class MultiCameraManager:
                 gpio_state = status["gpio_state"]
                 address = status.get("rtsp_display", status.get("rtsp_url", "-"))
                 logs = status.get("logs", [])
+                if status.get("camera_connected"):
+                    connected_cameras += 1
             else:
                 gpio_state = "N/A"
                 address = "-"
@@ -211,9 +215,27 @@ class MultiCameraManager:
         return {
             "uptime": self.get_uptime_display(),
             "camera_rows": camera_rows,
+            "connected_cameras": connected_cameras,
             "warning_logs": warning_logs[-20:],
             "critical_logs": critical_logs[-20:],
         }
+
+
+def apply_overrides(overrides):
+    if not overrides:
+        return
+
+    for item in overrides:
+        if "=" not in item:
+            print(f"Skip invalid --override '{item}', expected KEY=VALUE")
+            continue
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not key:
+            print(f"Skip invalid --override '{item}', empty key")
+            continue
+        os.environ[key] = value
+        print(f"Override env: {key}=***")
 
 
 @app.route("/")
@@ -357,6 +379,7 @@ def draw_console_ui(stdscr, manager_obj):
         for i, cam in enumerate(cameras):
             is_active = selected_tab == "camera" and i == selected_idx
             tab_items.append(f"[{cam['name']}]" if is_active else cam["name"])
+        tab_items.append("[Settings]" if selected_tab == "settings" else "Settings")
         tabs = " | ".join(tab_items)
         stdscr.addstr(0, 1, tabs[:w - 2], curses.A_REVERSE)
 
@@ -371,7 +394,7 @@ def draw_console_ui(stdscr, manager_obj):
 
             stdscr.addstr(3, 3, f"Current time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
             stdscr.addstr(4, 3, f"Uptime: {overview['uptime']}")
-            stdscr.addstr(5, 3, f"Active cameras: {len(overview['camera_rows'])}")
+            stdscr.addstr(5, 3, f"Active cameras: {overview['connected_cameras']}")
 
             camera_max_lines = max(1, split_h - 3)
             for i, row in enumerate(overview["camera_rows"][:camera_max_lines]):
@@ -387,7 +410,7 @@ def draw_console_ui(stdscr, manager_obj):
                 color = curses.color_pair(3) if level == "CRIT" else curses.color_pair(4)
                 stdscr.addstr(top_h + split_h + 3 + i, 3, f"[{level}] ", color | curses.A_BOLD)
                 stdscr.addstr(entry[:w - 16])
-        else:
+        elif selected_tab == "camera":
             top_h = 11
             left_w = max(50, w // 2)
             right_w = w - left_w - 4
@@ -421,8 +444,14 @@ def draw_console_ui(stdscr, manager_obj):
 
             for i, entry in enumerate(logs[-log_max_lines:]):
                 stdscr.addstr(log_y + i, 3, entry[:w - 6])
+        else:
+            draw_box(stdscr, 1, 1, h - 3, w - 2, "SETTINGS")
+            stdscr.addstr(3, 3, "Settings panel is available in Web UI (--debug / --setup).")
+            stdscr.addstr(5, 3, "Press P to close this panel.")
+            stdscr.addstr(7, 3, "Use --override KEY=VALUE to override env variables (e.g. passwords).")
+            stdscr.addstr(8, 3, "Example: --override CAMERA_1_RTSP_PASSWORD=secret")
 
-        footer = "TAB - overview/camera | ←/→ - смена камеры | Q - exit"
+        footer = "TAB - overview/camera | P - settings | ←/→ - смена камеры | Q - exit"
         stdscr.addstr(h - 1, max(0, (w - len(footer)) // 2), footer, curses.A_REVERSE)
 
         stdscr.refresh()
@@ -431,15 +460,27 @@ def draw_console_ui(stdscr, manager_obj):
         if ch in (ord('q'), ord('Q')):
             break
         if ch == 9:
-            selected_tab = "camera" if selected_tab == "overview" else "overview"
+            if selected_tab == "overview":
+                selected_tab = "camera"
+            elif selected_tab == "camera":
+                selected_tab = "overview"
         if ch == curses.KEY_RIGHT:
+            if selected_tab == "settings":
+                continue
             if selected_tab != "camera":
                 selected_tab = "camera"
             selected_idx = (selected_idx + 1) % len(cameras)
         if ch == curses.KEY_LEFT:
+            if selected_tab == "settings":
+                continue
             if selected_tab != "camera":
                 selected_tab = "camera"
             selected_idx = (selected_idx - 1) % len(cameras)
+        if ch in (ord('p'), ord('P')):
+            if selected_tab == "settings":
+                selected_tab = "overview"
+            else:
+                selected_tab = "settings"
 
 
 def run_normal_console(manager_obj):
@@ -452,7 +493,10 @@ def main():
     parser = argparse.ArgumentParser(description="Motion detection service")
     parser.add_argument("--debug", action="store_true", help="run in debug mode with web UI")
     parser.add_argument("--setup", action="store_true", help="run setup mode with web UI and camera creation")
+    parser.add_argument("--override", action="append", help="override env vars: KEY=VALUE")
     args = parser.parse_args()
+
+    apply_overrides(args.override)
 
     SETUP_MODE = args.setup
 
