@@ -8,7 +8,7 @@ Type=simple
 User=pi
 WorkingDirectory=/opt/motion-detection
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/motion-detection/.venv/bin/python /opt/motion-detection/app.py
+ExecStart=/usr/local/bin/motion-detection --debug
 Restart=always
 RestartSec=3
 
