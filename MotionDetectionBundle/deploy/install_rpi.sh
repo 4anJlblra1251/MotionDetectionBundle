@@ -74,7 +74,7 @@ fi
 cat > /usr/local/bin/motion-detection <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-exec "$APP_DIR/.venv/bin/python" "$APP_DIR/app.py" --config "$CONFIG_PATH" "$@"
+exec "$APP_DIR/.venv/bin/python" "$APP_DIR/app.py" --config "$CONFIG_PATH" "\$@"
 EOF
 chmod 0755 /usr/local/bin/motion-detection
 
