@@ -171,12 +171,11 @@ class MotionDetector:
         self.add_log("GPIO forced LOW due to connection error")
 
     def _exit_safety_mode(self):
-        self.connection_ok = True
-
         if not self.safety_disabled:
             return
 
         self.safety_disabled = False
+        self.connection_ok = True
         self.event_detection_enabled = True
         self.event_detected = False
         self.motion_frames = 0
@@ -242,7 +241,6 @@ class MotionDetector:
         while self.running:
             attempt += 1
             if self.open_stream():
-                self._exit_safety_mode()
                 if attempt > 1:
                     self.add_log(f"Reconnect success on attempt {attempt}")
                 return True
@@ -268,8 +266,7 @@ class MotionDetector:
                 continue
 
             while self.running:
-                with silence_stderr():
-                    ret, frame = self.cap.read()
+                ret, frame = self.cap.read()
 
                 if not ret or frame is None:
                     self._enter_safety_mode("Frame read error")
