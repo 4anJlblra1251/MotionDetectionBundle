@@ -11,6 +11,7 @@ from copy import deepcopy
 app = Flask(__name__)
 manager = None
 SETUP_MODE = False
+DEBUG_MODE = False
 
 DEFAULT_CAMERA_CONFIG = {
     "rtsp_url": "rtsp://user:pass@127.0.0.1:554/stream",
@@ -135,6 +136,24 @@ class MultiCameraManager:
                     return deepcopy(camera)
         return None
 
+    def remove_camera(self, camera_id):
+        with self.lock:
+            cameras = self.config["cameras"]
+            index = next((i for i, c in enumerate(cameras) if c["id"] == camera_id), None)
+            if index is None:
+                return False, "camera not found"
+
+            if len(cameras) <= 1:
+                return False, "cannot delete the last camera"
+
+            removed = cameras.pop(index)
+            if self.config.get("active_camera") == camera_id:
+                self.config["active_camera"] = cameras[0]["id"] if cameras else None
+
+            self._save_config_file()
+            self._sync_detectors_with_config(start_threads=False)
+            return True, deepcopy(removed)
+
     def get_active_camera_id(self):
         with self.lock:
             return self.config.get("active_camera")
@@ -240,11 +259,14 @@ def apply_overrides(overrides):
 
 @app.route("/")
 def index():
-    return render_template("index.html", setup_mode=SETUP_MODE)
+    return render_template("index.html", setup_mode=SETUP_MODE, debug_mode=DEBUG_MODE)
 
 
 @app.route("/video")
 def video():
+    if not DEBUG_MODE:
+        return jsonify({"error": "video stream is available only in --debug mode"}), 403
+
     mode = request.args.get("mode", "debug")
     camera_id = request.args.get("camera_id")
 
@@ -281,6 +303,24 @@ def cameras_api():
     camera_config = payload.get("config") or {}
     camera = manager.add_camera(name=name, camera_config=camera_config)
     return jsonify(camera)
+
+
+@app.route("/api/cameras/<camera_id>", methods=["DELETE"])
+def delete_camera(camera_id):
+    if not SETUP_MODE:
+        return jsonify({"error": "deleting cameras allowed only in --setup mode"}), 403
+
+    ok, result = manager.remove_camera(camera_id)
+    if not ok:
+        if result == "camera not found":
+            return jsonify({"error": result}), 404
+        return jsonify({"error": result}), 400
+
+    return jsonify({
+        "status": "ok",
+        "removed": result,
+        "active_camera": manager.get_active_camera_id(),
+    })
 
 
 @app.route("/api/active_camera", methods=["POST"])
@@ -488,7 +528,7 @@ def run_normal_console(manager_obj):
 
 
 def main():
-    global manager, SETUP_MODE
+    global manager, SETUP_MODE, DEBUG_MODE
 
     parser = argparse.ArgumentParser(description="Motion detection service")
     parser.add_argument("--debug", action="store_true", help="run in debug mode with web UI")
@@ -499,8 +539,9 @@ def main():
     apply_overrides(args.override)
 
     SETUP_MODE = args.setup
+    DEBUG_MODE = args.debug
 
-    manager = MultiCameraManager("config.json", debug=(args.debug or args.setup))
+    manager = MultiCameraManager("config.json", debug=args.debug)
     manager.start()
 
     if args.debug or args.setup:
