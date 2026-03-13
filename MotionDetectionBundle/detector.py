@@ -67,7 +67,7 @@ class MotionDetector:
     def __init__(self, camera_id: str, config: dict, debug=False):
         self.camera_id = camera_id
         self.debug = debug
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
 
         self.last_frame = None
         self.last_debug_frame = None
@@ -75,7 +75,8 @@ class MotionDetector:
         self.last_thresh = None
 
         self.event_detected = False
-        self.event_detection_enabled = True
+        self._runtime_event_detection_enabled = True
+        self._manual_event_detected = False
         self.last_event_time = 0.0
         self.last_motion_seen_time = 0.0
         self.motion_frames = 0
@@ -89,6 +90,8 @@ class MotionDetector:
         self.gpio_device = None
         self.gpio_busy = False
         self.gpio_state = "LOW"
+        self.test_mode_enabled = False
+        self._test_mode_prev_detection_enabled = True
 
         self.log_buffer = deque(maxlen=30)
         self.config = {}
@@ -162,7 +165,7 @@ class MotionDetector:
 
         self.safety_disabled = True
         self.connection_ok = False
-        self.event_detection_enabled = False
+        self._runtime_event_detection_enabled = False
         self.event_detected = False
         self.motion_frames = 0
         self.last_motion_seen_time = 0.0
@@ -174,7 +177,7 @@ class MotionDetector:
     def _exit_safety_mode(self):
         self.safety_disabled = False
         self.connection_ok = True
-        self.event_detection_enabled = True
+        self._runtime_event_detection_enabled = True
         self.event_detected = False
         self.motion_frames = 0
         self.last_motion_seen_time = 0.0
@@ -223,6 +226,67 @@ class MotionDetector:
                 self.add_log("GPIO LOW")
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def set_test_mode(self, enabled: bool):
+        with self.lock:
+            if enabled and not self.test_mode_enabled:
+                self.test_mode_enabled = True
+                self._test_mode_prev_detection_enabled = self._runtime_event_detection_enabled
+                self._manual_event_detected = False
+                self.add_log("Test mode enabled")
+                return
+
+            if not enabled and self.test_mode_enabled:
+                self.test_mode_enabled = False
+                self._runtime_event_detection_enabled = self._test_mode_prev_detection_enabled
+                self._manual_event_detected = False
+                self.set_gpio_manual("LOW")
+                self.add_log("Test mode disabled")
+
+    def set_runtime_detection_enabled(self, enabled: bool):
+        with self.lock:
+            self._runtime_event_detection_enabled = bool(enabled)
+            state = "enabled" if self._runtime_event_detection_enabled else "disabled"
+            self.add_log(f"Auto detection {state}")
+
+    def set_gpio_manual(self, state: str):
+        state = (state or "").upper()
+        if state not in ("HIGH", "LOW"):
+            return False
+
+        if not self.config.get("gpio_enabled", False):
+            self.gpio_state = "LOW"
+            self.add_log("GPIO manual control ignored: GPIO disabled in config")
+            return False
+
+        if self.gpio_device is None:
+            self.add_log("GPIO manual control ignored: GPIO device unavailable")
+            return False
+
+        try:
+            if state == "HIGH":
+                self.gpio_device.on()
+            else:
+                self.gpio_device.off()
+            self.gpio_state = state
+            self.add_log(f"GPIO forced {state}")
+            return True
+        except Exception as e:
+            self.add_log(f"GPIO manual error: {e}")
+            return False
+
+    def set_manual_event(self, value: bool):
+        with self.lock:
+            self._manual_event_detected = bool(value)
+            state = "TRUE" if self._manual_event_detected else "FALSE"
+            self.add_log(f"Manual event set to {state}")
+
+    @property
+    def event_detection_enabled(self):
+        return self._runtime_event_detection_enabled
+
+    def get_effective_event_status(self):
+        return bool(self.event_detected or (self.test_mode_enabled and self._manual_event_detected))
 
     def open_stream(self):
         if self.cap is not None:
@@ -355,7 +419,7 @@ class MotionDetector:
                         self.event_detected = False
 
                     if self.debug:
-                        cv2.putText(debug_frame, f"event={self.event_detected}", (10, 25),
+                        cv2.putText(debug_frame, f"event={self.get_effective_event_status()}", (10, 25),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                         cv2.putText(debug_frame, f"gpio={self.get_gpio_state_label()}", (10, 55),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
@@ -389,8 +453,10 @@ class MotionDetector:
                 "gpio_enabled": bool(self.config.get("gpio_enabled", False)),
                 "gpio_pin": int(self.config.get("gpio_pin", 17)),
                 "gpio_state": self.get_gpio_state_label(),
-                "event_status": bool(self.event_detected),
+                "event_status": bool(self.get_effective_event_status()),
                 "event_detection_enabled": bool(self.event_detection_enabled),
+                "test_mode": bool(self.test_mode_enabled),
+                "manual_event": bool(self._manual_event_detected),
                 "camera_connected": bool(self.connection_ok),
                 "safety_disabled": bool(self.safety_disabled),
                 "last_event_time": (
