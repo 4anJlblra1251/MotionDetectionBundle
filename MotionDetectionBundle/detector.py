@@ -92,6 +92,7 @@ class MotionDetector:
 
         self.log_buffer = deque(maxlen=30)
         self.config = {}
+        self._primed_frame = None
 
         self.update_config(config, add_log=False)
 
