@@ -23,6 +23,8 @@ DEFAULT_CAMERA_CONFIG = {
     "gpio_pin": 17,
     "gpio_hold_seconds": 3.0,
     "gpio_active_high": True,
+    "reconnect_max_attempts": 0,
+    "reconnect_retry_interval": 1.0,
 }
 
 
