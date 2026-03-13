@@ -31,6 +31,7 @@ class MultiCameraManager:
         self.config_path = config_path
         self.debug = debug
         self.lock = threading.Lock()
+        self.started_at = time.time()
         self.detectors = {}
         self.threads = {}
         self.config = self._load_config_file()
@@ -164,6 +165,54 @@ class MultiCameraManager:
                     return True
         return False
 
+    def get_uptime_display(self):
+        uptime_seconds = max(0, int(time.time() - self.started_at))
+        hours, rem = divmod(uptime_seconds, 3600)
+        minutes, seconds = divmod(rem, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    def get_overview(self):
+        with self.lock:
+            cameras = deepcopy(self.config["cameras"])
+            detectors = dict(self.detectors)
+
+        camera_rows = []
+        warning_logs = []
+        critical_logs = []
+
+        for camera in cameras:
+            detector = detectors.get(camera["id"])
+            status = detector.get_status() if detector else None
+
+            if status is not None:
+                gpio_state = status["gpio_state"]
+                address = status.get("rtsp_display", status.get("rtsp_url", "-"))
+                logs = status.get("logs", [])
+            else:
+                gpio_state = "N/A"
+                address = "-"
+                logs = []
+
+            camera_rows.append({
+                "name": camera["name"],
+                "gpio_state": gpio_state,
+                "address": address,
+            })
+
+            for entry in logs:
+                lowered = entry.lower()
+                if any(marker in lowered for marker in ["critical", "crit", "fatal"]):
+                    critical_logs.append(entry)
+                elif any(marker in lowered for marker in ["error", "failed", "warning", "warn"]):
+                    warning_logs.append(entry)
+
+        return {
+            "uptime": self.get_uptime_display(),
+            "camera_rows": camera_rows,
+            "warning_logs": warning_logs[-20:],
+            "critical_logs": critical_logs[-20:],
+        }
+
 
 @app.route("/")
 def index():
@@ -270,6 +319,7 @@ def draw_console_ui(stdscr, manager_obj):
     stdscr.timeout(500)
 
     selected_idx = 0
+    selected_tab = "overview"
 
     if curses.has_colors():
         curses.start_color()
@@ -290,52 +340,87 @@ def draw_console_ui(stdscr, manager_obj):
 
         selected_idx = max(0, min(selected_idx, len(cameras) - 1))
         selected_camera = cameras[selected_idx]
-        manager_obj.set_active_camera(selected_camera["id"])
-        status = manager_obj.get_status(selected_camera["id"])
+
+        if selected_tab == "camera":
+            manager_obj.set_active_camera(selected_camera["id"])
+            status = manager_obj.get_status(selected_camera["id"])
+        else:
+            status = None
+            overview = manager_obj.get_overview()
 
         stdscr.erase()
         h, w = stdscr.getmaxyx()
 
-        tabs = " | ".join(
-            [f"[{cam['name']}]" if i == selected_idx else cam["name"] for i, cam in enumerate(cameras)]
-        )
+        tab_items = ["[Overview]" if selected_tab == "overview" else "Overview"]
+        for i, cam in enumerate(cameras):
+            is_active = selected_tab == "camera" and i == selected_idx
+            tab_items.append(f"[{cam['name']}]" if is_active else cam["name"])
+        tabs = " | ".join(tab_items)
         stdscr.addstr(0, 1, tabs[:w - 2], curses.A_REVERSE)
 
-        top_h = 11
-        left_w = max(50, w // 2)
-        right_w = w - left_w - 4
+        if selected_tab == "overview":
+            top_h = 8
+            split_h = max(6, (h - top_h - 4) // 2)
+            log_h = h - top_h - split_h - 4
 
-        draw_box(stdscr, 1, 1, top_h, left_w, f"SYSTEM ({selected_camera['id']})")
-        draw_box(stdscr, 1, left_w + 2, top_h, right_w, "EVENT / GPIO")
-        draw_box(stdscr, top_h + 1, 1, h - top_h - 3, w - 2, "LOGS")
+            draw_box(stdscr, 1, 1, top_h, w - 2, "SYSTEM OVERVIEW")
+            draw_box(stdscr, top_h + 1, 1, split_h, w - 2, "CAMERAS")
+            draw_box(stdscr, top_h + split_h + 1, 1, log_h + 2, w - 2, "WARN / CRITICAL LOGS")
 
-        stdscr.addstr(3, 3, f"Time: {status['current_time']}")
-        stdscr.addstr(4, 3, f"RTSP: {status.get('rtsp_display', status['rtsp_url'])[:left_w - 10]}")
-        stdscr.addstr(5, 3, f"GPIO enabled: {status['gpio_enabled']}")
-        stdscr.addstr(6, 3, f"GPIO pin: {status['gpio_pin']}")
+            stdscr.addstr(3, 3, f"Current time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            stdscr.addstr(4, 3, f"Uptime: {overview['uptime']}")
+            stdscr.addstr(5, 3, f"Active cameras: {len(overview['camera_rows'])}")
 
-        event_str = "TRUE" if status["event_status"] else "FALSE"
-        gpio_str = status["gpio_state"]
+            camera_max_lines = max(1, split_h - 3)
+            for i, row in enumerate(overview["camera_rows"][:camera_max_lines]):
+                camera_line = f"- {row['name']}: GPIO={row['gpio_state']}, addr={row['address']}"
+                stdscr.addstr(top_h + 3 + i, 3, camera_line[:w - 6])
 
-        event_color = curses.color_pair(2) if status["event_status"] else curses.color_pair(3)
-        gpio_color = curses.color_pair(2) if gpio_str == "HIGH" else curses.color_pair(4)
+            combined_logs = [("CRIT", item) for item in overview["critical_logs"]] + [
+                ("WARN", item) for item in overview["warning_logs"]
+            ]
+            combined_logs = combined_logs[-max(1, log_h):]
 
-        stdscr.addstr(3, left_w + 4, "Event status: ")
-        stdscr.addstr(event_str, event_color | curses.A_BOLD)
+            for i, (level, entry) in enumerate(combined_logs):
+                color = curses.color_pair(3) if level == "CRIT" else curses.color_pair(4)
+                stdscr.addstr(top_h + split_h + 3 + i, 3, f"[{level}] ", color | curses.A_BOLD)
+                stdscr.addstr(entry[:w - 16])
+        else:
+            top_h = 11
+            left_w = max(50, w // 2)
+            right_w = w - left_w - 4
 
-        stdscr.addstr(5, left_w + 4, "GPIO state: ")
-        stdscr.addstr(gpio_str, gpio_color | curses.A_BOLD)
+            draw_box(stdscr, 1, 1, top_h, left_w, f"SYSTEM ({selected_camera['id']})")
+            draw_box(stdscr, 1, left_w + 2, top_h, right_w, "EVENT / GPIO")
+            draw_box(stdscr, top_h + 1, 1, h - top_h - 3, w - 2, "LOGS")
 
-        stdscr.addstr(7, left_w + 4, f"Last event: {status['last_event_time']}")
+            stdscr.addstr(3, 3, f"Time: {status['current_time']}")
+            stdscr.addstr(4, 3, f"RTSP: {status.get('rtsp_display', status['rtsp_url'])[:left_w - 10]}")
+            stdscr.addstr(5, 3, f"GPIO enabled: {status['gpio_enabled']}")
+            stdscr.addstr(6, 3, f"GPIO pin: {status['gpio_pin']}")
 
-        logs = status.get("logs", [])
-        log_y = top_h + 3
-        log_max_lines = h - log_y - 2
+            event_str = "TRUE" if status["event_status"] else "FALSE"
+            gpio_str = status["gpio_state"]
 
-        for i, entry in enumerate(logs[-log_max_lines:]):
-            stdscr.addstr(log_y + i, 3, entry[:w - 6])
+            event_color = curses.color_pair(2) if status["event_status"] else curses.color_pair(3)
+            gpio_color = curses.color_pair(2) if gpio_str == "HIGH" else curses.color_pair(4)
 
-        footer = "TAB/←/→ - смена камеры | Q - exit"
+            stdscr.addstr(3, left_w + 4, "Event status: ")
+            stdscr.addstr(event_str, event_color | curses.A_BOLD)
+
+            stdscr.addstr(5, left_w + 4, "GPIO state: ")
+            stdscr.addstr(gpio_str, gpio_color | curses.A_BOLD)
+
+            stdscr.addstr(7, left_w + 4, f"Last event: {status['last_event_time']}")
+
+            logs = status.get("logs", [])
+            log_y = top_h + 3
+            log_max_lines = h - log_y - 2
+
+            for i, entry in enumerate(logs[-log_max_lines:]):
+                stdscr.addstr(log_y + i, 3, entry[:w - 6])
+
+        footer = "TAB - overview/camera | ←/→ - смена камеры | Q - exit"
         stdscr.addstr(h - 1, max(0, (w - len(footer)) // 2), footer, curses.A_REVERSE)
 
         stdscr.refresh()
@@ -343,9 +428,15 @@ def draw_console_ui(stdscr, manager_obj):
         ch = stdscr.getch()
         if ch in (ord('q'), ord('Q')):
             break
-        if ch in (9, curses.KEY_RIGHT):
+        if ch == 9:
+            selected_tab = "camera" if selected_tab == "overview" else "overview"
+        if ch == curses.KEY_RIGHT:
+            if selected_tab != "camera":
+                selected_tab = "camera"
             selected_idx = (selected_idx + 1) % len(cameras)
         if ch == curses.KEY_LEFT:
+            if selected_tab != "camera":
+                selected_tab = "camera"
             selected_idx = (selected_idx - 1) % len(cameras)
 
 
