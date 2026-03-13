@@ -6,6 +6,8 @@ import time
 import curses
 import json
 import os
+import sys
+import fcntl
 from copy import deepcopy
 
 app = Flask(__name__)
@@ -13,6 +15,35 @@ manager = None
 SETUP_MODE = False
 DEBUG_MODE = False
 HWTEST_MODE = False
+INSTANCE_LOCK_HANDLE = None
+
+
+def acquire_instance_lock():
+    global INSTANCE_LOCK_HANDLE
+
+    lock_path = os.environ.get("MOTION_DETECTION_LOCK", "/tmp/motion-detection.lock")
+    lock_dir = os.path.dirname(lock_path)
+    if lock_dir:
+        os.makedirs(lock_dir, exist_ok=True)
+
+    lock_handle = open(lock_path, "w", encoding="utf-8")
+    try:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_handle.close()
+        print(
+            "MotionDetection already running (lock busy). "
+            "Service is already active: open http://<raspberry-ip>:5000 or check status with "
+            "sudo systemctl status motion-detection.service",
+            file=sys.stderr,
+        )
+        return False
+
+    lock_handle.write(str(os.getpid()))
+    lock_handle.flush()
+    INSTANCE_LOCK_HANDLE = lock_handle
+    return True
+
 
 DEFAULT_CAMERA_CONFIG = {
     "rtsp_url": "rtsp://user:pass@127.0.0.1:554/stream",
@@ -619,15 +650,23 @@ def main():
     parser.add_argument("--setup", action="store_true", help="run setup mode with web UI and camera creation")
     parser.add_argument("--override", action="append", help="override env vars: KEY=VALUE")
     parser.add_argument("--hwtest", action="store_true", help="enable hardware test controls in curses UI")
+    parser.add_argument(
+        "--config",
+        default=os.environ.get("MOTION_DETECTION_CONFIG", "config.json"),
+        help="path to config file (default: MOTION_DETECTION_CONFIG or ./config.json)",
+    )
     args = parser.parse_args()
 
     apply_overrides(args.override)
+
+    if not acquire_instance_lock():
+        return 1
 
     SETUP_MODE = args.setup
     DEBUG_MODE = args.debug
     HWTEST_MODE = args.hwtest
 
-    manager = MultiCameraManager("config.json", debug=args.debug)
+    manager = MultiCameraManager(args.config, debug=args.debug)
     manager.start()
 
     if args.debug or args.setup:
@@ -641,6 +680,8 @@ def main():
         except KeyboardInterrupt:
             print("Остановка")
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
