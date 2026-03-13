@@ -123,7 +123,7 @@ async function fetchStatus() {
   if (data.error) return;
 
   document.getElementById('current_time').textContent = data.current_time;
-  document.getElementById('rtsp_url').textContent = data.rtsp_display || data.rtsp_url;
+  document.getElementById('rtsp_url').textContent = data.rtsp_url;
   document.getElementById('gpio_enabled_status').textContent = data.gpio_enabled ? 'ENABLED' : 'DISABLED';
   document.getElementById('gpio_enabled_status').className = 'value ' + (data.gpio_enabled ? 'green' : 'yellow');
   document.getElementById('gpio_state').textContent = data.gpio_state;
