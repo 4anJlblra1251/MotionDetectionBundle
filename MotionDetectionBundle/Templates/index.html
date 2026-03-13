@@ -22,6 +22,8 @@
     button { cursor:pointer; background:var(--accent2); color:#08111d; font-weight:bold; border:none; }
     pre { background:#020617; color:#d1fae5; padding:12px; font-size:13px; overflow:auto; min-height:220px; border-radius:12px; border:1px solid var(--border); }
     .inline { display:flex; gap:8px; }
+    .settings-hidden { display:none; }
+    .hint { color: var(--muted); margin:8px 0 0 0; font-size:13px; }
   </style>
 </head>
 <body>
@@ -53,14 +55,17 @@
       <div class="status-grid">
         <div class="status-item"><div class="label">Time</div><div class="value" id="current_time">-</div></div>
         <div class="status-item"><div class="label">RTSP</div><div class="value blue" id="rtsp_url">-</div></div>
+        <div class="status-item"><div class="label">Camera link</div><div class="value" id="camera_connected">-</div></div>
         <div class="status-item"><div class="label">GPIO enabled</div><div class="value" id="gpio_enabled_status">-</div></div>
         <div class="status-item"><div class="label">GPIO state</div><div class="value" id="gpio_state">-</div></div>
         <div class="status-item"><div class="label">Event status</div><div class="value" id="event_status">-</div></div>
+        <div class="status-item"><div class="label">Event detection</div><div class="value" id="event_detection_enabled">-</div></div>
         <div class="status-item"><div class="label">Last event time</div><div class="value" id="last_event_time">-</div></div>
       </div>
+      <p class="hint">Нажмите <b>P</b>, чтобы открыть/скрыть панель настроек.</p>
     </div>
 
-    <div class="card">
+    <div class="card settings-hidden" id="settingsCard">
       <h2>Settings</h2>
       <label>RTSP URL <input id="rtsp_url_input" type="text"></label>
       <label>Min area <input id="min_area" type="number"></label>
@@ -68,6 +73,8 @@
       <label>Var threshold <input id="var_threshold" type="number"></label>
       <label>Event delay (sec) <input id="event_delay" type="number"></label>
       <label>Blur kernel <input id="blur_kernel" type="number"></label>
+      <label>Reconnect attempts (0 = infinite) <input id="reconnect_max_attempts" type="number" min="0"></label>
+      <label>Reconnect poll interval (sec) <input id="reconnect_retry_interval" type="number" step="0.1" min="0.1"></label>
       <label><input id="gpio_enabled" type="checkbox" style="width:auto;"> Enable GPIO output</label>
       <label>GPIO pin (BCM) <input id="gpio_pin" type="number"></label>
       <label>GPIO hold seconds <input id="gpio_hold_seconds" type="number" step="0.1"></label>
@@ -84,6 +91,30 @@
 <script>
 let currentCameraId = null;
 let cameras = [];
+
+function toggleSettingsPanel(forceVisible = null) {
+  const card = document.getElementById('settingsCard');
+  if (!card) return;
+
+  if (forceVisible === true) {
+    card.classList.remove('settings-hidden');
+    return;
+  }
+
+  if (forceVisible === false) {
+    card.classList.add('settings-hidden');
+    return;
+  }
+
+  card.classList.toggle('settings-hidden');
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'p' || event.key === 'P') {
+    event.preventDefault();
+    toggleSettingsPanel();
+  }
+});
 
 async function fetchCameras() {
   const res = await fetch('/api/cameras');
@@ -124,12 +155,29 @@ async function fetchStatus() {
 
   document.getElementById('current_time').textContent = data.current_time;
   document.getElementById('rtsp_url').textContent = data.rtsp_url;
+
+  const cameraConnectedLabel = data.camera_connected ? 'ONLINE' : 'OFFLINE';
+  document.getElementById('camera_connected').textContent = cameraConnectedLabel;
+  document.getElementById('camera_connected').className = 'value ' + (data.camera_connected ? 'green' : 'red');
+
   document.getElementById('gpio_enabled_status').textContent = data.gpio_enabled ? 'ENABLED' : 'DISABLED';
   document.getElementById('gpio_enabled_status').className = 'value ' + (data.gpio_enabled ? 'green' : 'yellow');
+
   document.getElementById('gpio_state').textContent = data.gpio_state;
-  document.getElementById('gpio_state').className = 'value ' + (data.gpio_state === 'HIGH' ? 'green' : 'yellow');
+  if (data.gpio_state === 'HIGH') {
+    document.getElementById('gpio_state').className = 'value green';
+  } else if (data.gpio_state === 'Safety disabled') {
+    document.getElementById('gpio_state').className = 'value red';
+  } else {
+    document.getElementById('gpio_state').className = 'value yellow';
+  }
+
   document.getElementById('event_status').textContent = data.event_status ? 'TRUE' : 'FALSE';
   document.getElementById('event_status').className = 'value ' + (data.event_status ? 'green' : 'red');
+
+  document.getElementById('event_detection_enabled').textContent = data.event_detection_enabled ? 'ENABLED' : 'SAFETY DISABLED';
+  document.getElementById('event_detection_enabled').className = 'value ' + (data.event_detection_enabled ? 'green' : 'red');
+
   document.getElementById('last_event_time').textContent = data.last_event_time;
   document.getElementById('logs').textContent = (data.logs || []).join('\n');
 }
@@ -146,6 +194,8 @@ async function loadConfig() {
   document.getElementById('var_threshold').value = data.var_threshold;
   document.getElementById('event_delay').value = data.event_delay;
   document.getElementById('blur_kernel').value = data.blur_kernel;
+  document.getElementById('reconnect_max_attempts').value = data.reconnect_max_attempts ?? 0;
+  document.getElementById('reconnect_retry_interval').value = data.reconnect_retry_interval ?? 1.0;
   document.getElementById('gpio_enabled').checked = data.gpio_enabled;
   document.getElementById('gpio_pin').value = data.gpio_pin;
   document.getElementById('gpio_hold_seconds').value = data.gpio_hold_seconds;
@@ -160,6 +210,8 @@ async function saveConfig() {
     var_threshold: parseInt(document.getElementById('var_threshold').value, 10),
     event_delay: parseInt(document.getElementById('event_delay').value, 10),
     blur_kernel: parseInt(document.getElementById('blur_kernel').value, 10),
+    reconnect_max_attempts: parseInt(document.getElementById('reconnect_max_attempts').value, 10),
+    reconnect_retry_interval: parseFloat(document.getElementById('reconnect_retry_interval').value),
     gpio_enabled: document.getElementById('gpio_enabled').checked,
     gpio_pin: parseInt(document.getElementById('gpio_pin').value, 10),
     gpio_hold_seconds: parseFloat(document.getElementById('gpio_hold_seconds').value),
