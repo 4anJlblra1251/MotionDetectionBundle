@@ -1,0 +1,6 @@
+flask>=3.0,<4
+numpy>=1.26,<3
+imutils>=0.5.4,<1
+gpiozero>=2.0,<3
+# OpenCV for Raspberry Pi is installed from apt for best ARM compatibility:
+# sudo apt install -y python3-opencv
