@@ -5,6 +5,7 @@
     "var_threshold": 60,
     "event_delay": 5,
     "blur_kernel": 7,
+    "event_hold_seconds": 3,
     
     "gpio_enabled": false,
     "gpio_pin": 17,

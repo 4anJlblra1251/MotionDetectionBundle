@@ -23,6 +23,8 @@ class MotionDetector:
 
         self.event_detected = False
         self.last_event_time = 0.0
+        self.last_motion_seen_time = 0.0
+        self.motion_frames = 0
 
         self.running = False
         self.cap = None
@@ -31,6 +33,7 @@ class MotionDetector:
         self.gpio_device = None
         self.gpio_busy = False
         self.gpio_state = "LOW"
+
 
         self.log_buffer = deque(maxlen=12)
 
@@ -218,14 +221,18 @@ class MotionDetector:
                     self.motion_frames = 0
 
                 now = time.time()
-                self.event_detected = False
 
                 if self.motion_frames >= self.config["motion_frames_threshold"]:
+                    self.last_motion_seen_time = now
+
                     if now - self.last_event_time > self.config["event_delay"]:
-                        self.event_detected = True
                         self.last_event_time = now
                         should_fire_event = True
                         event_log_message = f"EVENT area={int(max_area)}"
+
+                
+                hold_time = float(self.config.get("event_hold_seconds", 3))
+                self.event_detected = (now - self.last_motion_seen_time) < hold_time
 
                 if self.debug:
                     cv2.putText(debug_frame, f"event={self.event_detected}", (10, 25),
