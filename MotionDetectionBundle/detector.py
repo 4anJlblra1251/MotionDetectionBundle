@@ -1,8 +1,9 @@
 import cv2
 import time
-import json
 import threading
+import os
 from collections import deque
+from urllib.parse import urlparse
 
 try:
     from gpiozero import OutputDevice
@@ -10,9 +11,24 @@ except Exception:
     OutputDevice = None
 
 
+
+
+def mask_rtsp_for_ui(rtsp_url: str) -> str:
+    expanded = os.path.expandvars(rtsp_url or "")
+    try:
+        parsed = urlparse(expanded)
+        if not parsed.hostname:
+            return expanded
+        if parsed.port:
+            return f"{parsed.hostname}:{parsed.port}"
+        return parsed.hostname
+    except Exception:
+        return expanded
+
+
 class MotionDetector:
-    def __init__(self, config_path="config.json", debug=False):
-        self.config_path = config_path
+    def __init__(self, camera_id: str, config: dict, debug=False):
+        self.camera_id = camera_id
         self.debug = debug
         self.lock = threading.Lock()
 
@@ -34,30 +50,21 @@ class MotionDetector:
         self.gpio_busy = False
         self.gpio_state = "LOW"
 
-
         self.log_buffer = deque(maxlen=12)
+        self.config = {}
 
-        self.load_config()
-        self.init_detector()
+        self.update_config(config, add_log=False)
 
     def add_log(self, message: str):
         timestamp = time.strftime("%H:%M:%S")
-        self.log_buffer.append(f"[{timestamp}] {message}")
+        self.log_buffer.append(f"[{timestamp}] [{self.camera_id}] {message}")
 
-    def load_config(self):
-        with open(self.config_path, "r", encoding="utf-8") as f:
-            self.config = json.load(f)
-
-    def save_config(self, new_config):
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            json.dump(new_config, f, indent=2, ensure_ascii=False)
-        self.reload_config()
-
-    def reload_config(self):
+    def update_config(self, new_config: dict, add_log=True):
         with self.lock:
-            self.load_config()
+            self.config = dict(new_config)
             self.init_detector()
-        self.add_log("Конфиг перечитан")
+        if add_log:
+            self.add_log("Конфиг обновлен")
 
     def init_detector(self):
         self.fgbg = cv2.createBackgroundSubtractorMOG2(
@@ -136,7 +143,8 @@ class MotionDetector:
         if self.cap is not None:
             self.cap.release()
 
-        self.cap = cv2.VideoCapture(self.config["rtsp_url"], cv2.CAP_FFMPEG)
+        rtsp_url = os.path.expandvars(self.config["rtsp_url"])
+        self.cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
         ok = self.cap.isOpened()
 
         if ok:
@@ -212,9 +220,6 @@ class MotionDetector:
                                 2
                             )
 
-                if not hasattr(self, "motion_frames"):
-                    self.motion_frames = 0
-
                 if motion:
                     self.motion_frames += 1
                 else:
@@ -230,7 +235,6 @@ class MotionDetector:
                         should_fire_event = True
                         event_log_message = f"EVENT area={int(max_area)}"
 
-                
                 hold_time = float(self.config.get("event_hold_seconds", 3))
                 self.event_detected = (now - self.last_motion_seen_time) < hold_time
 
@@ -257,8 +261,10 @@ class MotionDetector:
     def get_status(self):
         with self.lock:
             return {
+                "camera_id": self.camera_id,
                 "current_time": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "rtsp_url": self.config.get("rtsp_url", ""),
+                "rtsp_display": mask_rtsp_for_ui(self.config.get("rtsp_url", "")),
                 "gpio_enabled": bool(self.config.get("gpio_enabled", False)),
                 "gpio_pin": int(self.config.get("gpio_pin", 17)),
                 "gpio_state": self.gpio_state,
@@ -267,7 +273,7 @@ class MotionDetector:
                     time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.last_event_time))
                     if self.last_event_time > 0 else "-"
                 ),
-                "config": self.config,
+                "config": dict(self.config),
                 "logs": list(self.log_buffer)
             }
 
