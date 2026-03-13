@@ -172,12 +172,11 @@ class MotionDetector:
         self.add_log("GPIO forced LOW due to connection error")
 
     def _exit_safety_mode(self):
-        self.connection_ok = True
-
         if not self.safety_disabled:
             return
 
         self.safety_disabled = False
+        self.connection_ok = True
         self.event_detection_enabled = True
         self.event_detected = False
         self.motion_frames = 0
@@ -230,24 +229,10 @@ class MotionDetector:
 
         if not ok:
             self.connection_ok = False
-            return False
 
-        probe_attempts = 3
-        probe_sleep = 0.1
-
-        for _ in range(probe_attempts):
-            with silence_stderr():
-                ret, frame = self.cap.read()
-            if ret and frame is not None:
-                self._primed_frame = frame
-                self.add_log("RTSP opened")
-                return True
-            time.sleep(probe_sleep)
-
-        self.connection_ok = False
-        self.cap.release()
-        self.cap = None
-        return False
+        if ok:
+            self.add_log("RTSP opened")
+        return ok
 
     def reconnect_with_limit(self):
         max_attempts = int(self.config.get("reconnect_max_attempts", 0))
@@ -257,7 +242,6 @@ class MotionDetector:
         while self.running:
             attempt += 1
             if self.open_stream():
-                self._exit_safety_mode()
                 if attempt > 1:
                     self.add_log(f"Reconnect success on attempt {attempt}")
                 return True
@@ -283,13 +267,7 @@ class MotionDetector:
                 continue
 
             while self.running:
-                if self._primed_frame is not None:
-                    frame = self._primed_frame
-                    self._primed_frame = None
-                    ret = True
-                else:
-                    with silence_stderr():
-                        ret, frame = self.cap.read()
+                ret, frame = self.cap.read()
 
                 if not ret or frame is None:
                     self._enter_safety_mode("Frame read error")
