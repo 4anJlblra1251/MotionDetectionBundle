@@ -12,6 +12,7 @@ app = Flask(__name__)
 manager = None
 SETUP_MODE = False
 DEBUG_MODE = False
+HWTEST_MODE = False
 
 DEFAULT_CAMERA_CONFIG = {
     "rtsp_url": "rtsp://user:pass@127.0.0.1:554/stream",
@@ -362,6 +363,39 @@ def config():
     return jsonify({"status": "ok"})
 
 
+@app.route("/api/test_mode", methods=["POST"])
+def test_mode_api():
+    if not HWTEST_MODE:
+        return jsonify({"error": "test mode API is available only with --hwtest"}), 403
+
+    payload = request.json or {}
+    camera_id = payload.get("camera_id") or manager.get_active_camera_id()
+    detector = manager.get_detector(camera_id)
+    if detector is None:
+        return jsonify({"error": "camera not found"}), 404
+
+    action = payload.get("action")
+    if action == "set_test_mode":
+        detector.set_test_mode(bool(payload.get("enabled", False)))
+    elif action == "set_auto_detection":
+        if not detector.test_mode_enabled:
+            return jsonify({"error": "test mode is disabled"}), 400
+        detector.set_runtime_detection_enabled(bool(payload.get("enabled", True)))
+    elif action == "set_gpio":
+        if not detector.test_mode_enabled:
+            return jsonify({"error": "test mode is disabled"}), 400
+        if not detector.set_gpio_manual(str(payload.get("state", ""))):
+            return jsonify({"error": "gpio manual control failed"}), 400
+    elif action == "set_manual_event":
+        if not detector.test_mode_enabled:
+            return jsonify({"error": "test mode is disabled"}), 400
+        detector.set_manual_event(bool(payload.get("value", False)))
+    else:
+        return jsonify({"error": "unknown action"}), 400
+
+    return jsonify({"status": "ok", "camera_id": camera_id, "data": detector.get_status()})
+
+
 def draw_box(stdscr, y, x, h, w, title):
     stdscr.addstr(y, x + 2, f" {title} ", curses.A_BOLD)
     for i in range(w):
@@ -384,6 +418,7 @@ def draw_console_ui(stdscr, manager_obj):
 
     selected_idx = 0
     selected_tab = "overview"
+    test_notice = ""
 
     if curses.has_colors():
         curses.start_color()
@@ -405,6 +440,9 @@ def draw_console_ui(stdscr, manager_obj):
         selected_idx = max(0, min(selected_idx, len(cameras) - 1))
         selected_camera = cameras[selected_idx]
 
+        if not HWTEST_MODE and selected_tab == "test":
+            selected_tab = "overview"
+
         if selected_tab == "camera":
             manager_obj.set_active_camera(selected_camera["id"])
             status = manager_obj.get_status(selected_camera["id"])
@@ -419,6 +457,8 @@ def draw_console_ui(stdscr, manager_obj):
         for i, cam in enumerate(cameras):
             is_active = selected_tab == "camera" and i == selected_idx
             tab_items.append(f"[{cam['name']}]" if is_active else cam["name"])
+        if HWTEST_MODE:
+            tab_items.append("[Test]" if selected_tab == "test" else "Test")
         tab_items.append("[Settings]" if selected_tab == "settings" else "Settings")
         tabs = " | ".join(tab_items)
         stdscr.addstr(0, 1, tabs[:w - 2], curses.A_REVERSE)
@@ -484,6 +524,29 @@ def draw_console_ui(stdscr, manager_obj):
 
             for i, entry in enumerate(logs[-log_max_lines:]):
                 stdscr.addstr(log_y + i, 3, entry[:w - 6])
+        elif HWTEST_MODE and selected_tab == "test":
+            manager_obj.set_active_camera(selected_camera["id"])
+            detector = manager_obj.get_detector(selected_camera["id"])
+            status = detector.get_status() if detector else {}
+            draw_box(stdscr, 1, 1, h - 3, w - 2, f"TEST MODE ({selected_camera['name']})")
+
+            test_mode = bool(status.get("test_mode"))
+            auto_detection = bool(status.get("event_detection_enabled"))
+            manual_event = bool(status.get("manual_event"))
+            gpio_state = status.get("gpio_state", "LOW")
+
+            stdscr.addstr(3, 3, "Внимание: изменения в этом режиме не сохраняются в config.json.")
+            stdscr.addstr(5, 3, f"T: Test mode           : {'ON' if test_mode else 'OFF'}")
+            stdscr.addstr(6, 3, f"A: Auto detection      : {'ON' if auto_detection else 'OFF'}")
+            stdscr.addstr(7, 3, f"G: GPIO manual state   : {gpio_state}")
+            stdscr.addstr(8, 3, f"E: Manual event status : {'TRUE' if manual_event else 'FALSE'}")
+            stdscr.addstr(10, 3, f"Effective event        : {'TRUE' if status.get('event_status') else 'FALSE'}")
+
+            hint = "Доступно только при включенном Test mode" if not test_mode else "A/G/E controls are active"
+            stdscr.addstr(12, 3, hint)
+
+            if test_notice:
+                stdscr.addstr(14, 3, f"Last action: {test_notice}"[:w - 6], curses.color_pair(4) | curses.A_BOLD)
         else:
             draw_box(stdscr, 1, 1, h - 3, w - 2, "SETTINGS")
             stdscr.addstr(3, 3, "Settings panel is available in Web UI (--debug / --setup).")
@@ -491,7 +554,7 @@ def draw_console_ui(stdscr, manager_obj):
             stdscr.addstr(7, 3, "Use --override KEY=VALUE to override env variables (e.g. passwords).")
             stdscr.addstr(8, 3, "Example: --override CAMERA_1_RTSP_PASSWORD=secret")
 
-        footer = "TAB - overview/camera | P - settings | ←/→ - смена камеры | Q - exit"
+        footer = "TAB - overview/camera | M - test tab | P - settings | ←/→ - camera | Q - exit" if HWTEST_MODE else "TAB - overview/camera | P - settings | ←/→ - camera | Q - exit"
         stdscr.addstr(h - 1, max(0, (w - len(footer)) // 2), footer, curses.A_REVERSE)
 
         stdscr.refresh()
@@ -504,14 +567,15 @@ def draw_console_ui(stdscr, manager_obj):
                 selected_tab = "camera"
             elif selected_tab == "camera":
                 selected_tab = "overview"
+
         if ch == curses.KEY_RIGHT:
-            if selected_tab == "settings":
+            if selected_tab in ("settings", "test"):
                 continue
             if selected_tab != "camera":
                 selected_tab = "camera"
             selected_idx = (selected_idx + 1) % len(cameras)
         if ch == curses.KEY_LEFT:
-            if selected_tab == "settings":
+            if selected_tab in ("settings", "test"):
                 continue
             if selected_tab != "camera":
                 selected_tab = "camera"
@@ -522,24 +586,46 @@ def draw_console_ui(stdscr, manager_obj):
             else:
                 selected_tab = "settings"
 
+        if HWTEST_MODE and ch in (ord('m'), ord('M')):
+            selected_tab = "test"
+
+        if HWTEST_MODE and selected_tab == "test":
+            detector = manager_obj.get_detector(selected_camera["id"])
+            if detector and ch in (ord('t'), ord('T')):
+                detector.set_test_mode(not detector.test_mode_enabled)
+                test_notice = f"test mode => {'ON' if detector.test_mode_enabled else 'OFF'}"
+            elif detector and ch in (ord('a'), ord('A')) and detector.test_mode_enabled:
+                detector.set_runtime_detection_enabled(not detector.event_detection_enabled)
+                test_notice = f"auto detection => {'ON' if detector.event_detection_enabled else 'OFF'}"
+            elif detector and ch in (ord('g'), ord('G')) and detector.test_mode_enabled:
+                target = "LOW" if detector.gpio_state == "HIGH" else "HIGH"
+                ok = detector.set_gpio_manual(target)
+                test_notice = f"gpio => {target}" if ok else "gpio change failed"
+            elif detector and ch in (ord('e'), ord('E')) and detector.test_mode_enabled:
+                next_value = not detector.get_status().get("manual_event", False)
+                detector.set_manual_event(next_value)
+                test_notice = f"manual event => {'TRUE' if next_value else 'FALSE'}"
+
 
 def run_normal_console(manager_obj):
     curses.wrapper(draw_console_ui, manager_obj)
 
 
 def main():
-    global manager, SETUP_MODE, DEBUG_MODE
+    global manager, SETUP_MODE, DEBUG_MODE, HWTEST_MODE
 
     parser = argparse.ArgumentParser(description="Motion detection service")
     parser.add_argument("--debug", action="store_true", help="run in debug mode with web UI")
     parser.add_argument("--setup", action="store_true", help="run setup mode with web UI and camera creation")
     parser.add_argument("--override", action="append", help="override env vars: KEY=VALUE")
+    parser.add_argument("--hwtest", action="store_true", help="enable hardware test controls in curses UI")
     args = parser.parse_args()
 
     apply_overrides(args.override)
 
     SETUP_MODE = args.setup
     DEBUG_MODE = args.debug
+    HWTEST_MODE = args.hwtest
 
     manager = MultiCameraManager("config.json", debug=args.debug)
     manager.start()
