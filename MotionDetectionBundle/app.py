@@ -37,7 +37,7 @@ def video():
 def status():
     return jsonify(detector.get_status())
 
-
+        
 @app.route("/api/config", methods=["GET", "POST"])
 def config():
     if request.method == "GET":

@@ -1,4 +1,3 @@
-//параметры обнаружения
 {
     "rtsp_url": "rtsp://admin:Engineer_ST-SA2651@192.168.10.101:554/unicast/c1/s1/live",
     "min_area": 12000,
@@ -7,7 +6,6 @@
     "event_delay": 5,
     "blur_kernel": 7,
     
-    // хардварные параметры
     "gpio_enabled": false,
     "gpio_pin": 17,
     "gpio_hold_seconds": 3.0,

@@ -5,7 +5,7 @@ import threading
 from collections import deque
 
 try:
-    from gpiozero import OutputDevice
+    from gpiozero import OutputDevice   
 except Exception:
     OutputDevice = None
 
