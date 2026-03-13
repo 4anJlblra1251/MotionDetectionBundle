@@ -1,12 +1,29 @@
 import cv2
 import time
 import threading
+import os
 from collections import deque
+from urllib.parse import urlparse
 
 try:
     from gpiozero import OutputDevice
 except Exception:
     OutputDevice = None
+
+
+
+
+def mask_rtsp_for_ui(rtsp_url: str) -> str:
+    expanded = os.path.expandvars(rtsp_url or "")
+    try:
+        parsed = urlparse(expanded)
+        if not parsed.hostname:
+            return expanded
+        if parsed.port:
+            return f"{parsed.hostname}:{parsed.port}"
+        return parsed.hostname
+    except Exception:
+        return expanded
 
 
 class MotionDetector:
@@ -126,7 +143,8 @@ class MotionDetector:
         if self.cap is not None:
             self.cap.release()
 
-        self.cap = cv2.VideoCapture(self.config["rtsp_url"], cv2.CAP_FFMPEG)
+        rtsp_url = os.path.expandvars(self.config["rtsp_url"])
+        self.cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
         ok = self.cap.isOpened()
 
         if ok:
@@ -246,6 +264,7 @@ class MotionDetector:
                 "camera_id": self.camera_id,
                 "current_time": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "rtsp_url": self.config.get("rtsp_url", ""),
+                "rtsp_display": mask_rtsp_for_ui(self.config.get("rtsp_url", "")),
                 "gpio_enabled": bool(self.config.get("gpio_enabled", False)),
                 "gpio_pin": int(self.config.get("gpio_pin", 17)),
                 "gpio_state": self.gpio_state,

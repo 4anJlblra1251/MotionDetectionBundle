@@ -310,7 +310,7 @@ def draw_console_ui(stdscr, manager_obj):
         draw_box(stdscr, top_h + 1, 1, h - top_h - 3, w - 2, "LOGS")
 
         stdscr.addstr(3, 3, f"Time: {status['current_time']}")
-        stdscr.addstr(4, 3, f"RTSP: {status['rtsp_url'][:left_w - 10]}")
+        stdscr.addstr(4, 3, f"RTSP: {status.get('rtsp_display', status['rtsp_url'])[:left_w - 10]}")
         stdscr.addstr(5, 3, f"GPIO enabled: {status['gpio_enabled']}")
         stdscr.addstr(6, 3, f"GPIO pin: {status['gpio_pin']}")
 
