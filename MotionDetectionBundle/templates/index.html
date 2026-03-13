@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8">
+			<title>Motion Debug Panel</title>
+			<style>
+				:root {
+				--bg: #0f172a;
+				--card: #111827;
+				--card2: #1e293b;
+				--text: #e5e7eb;
+				--muted: #94a3b8;
+				--accent: #22c55e;
+				--accent2: #38bdf8;
+				--danger: #ef4444;
+				--warning: #f59e0b;
+				--border: #334155;
+				}
+
+				body {
+				font-family: Arial, sans-serif;
+				margin: 0;
+				padding: 20px;
+				background: var(--bg);
+				color: var(--text);
+				}
+
+				h1 {
+				margin: 0 0 20px 0;
+				color: white;
+				}
+
+				.layout {
+				display: grid;
+				grid-template-columns: 2fr 1fr;
+				gap: 20px;
+				align-items: start;
+				}
+
+				.card {
+				background: linear-gradient(180deg, var(--card), var(--card2));
+				border: 1px solid var(--border);
+				border-radius: 14px;
+				padding: 16px;
+				box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+				}
+
+				.card h2, .card h3 {
+				margin-top: 0;
+				color: white;
+				}
+
+				img {
+				width: 100%;
+				border-radius: 12px;
+				border: 1px solid var(--border);
+				background: black;
+				}
+
+				.status-grid {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 12px;
+				margin-top: 16px;
+				}
+
+				.status-item {
+				border: 1px solid var(--border);
+				border-radius: 10px;
+				padding: 10px;
+				background: rgba(255,255,255,0.02);
+				}
+
+				.label {
+				color: var(--muted);
+				font-size: 13px;
+				margin-bottom: 6px;
+				}
+
+				.value {
+				font-size: 15px;
+				font-weight: bold;
+				word-break: break-word;
+				}
+
+				.green { color: var(--accent); }
+				.red { color: var(--danger); }
+				.yellow { color: var(--warning); }
+				.blue { color: var(--accent2); }
+
+				label {
+				display: block;
+				margin-top: 12px;
+				color: var(--muted);
+				}
+
+				input, select, button {
+				margin-top: 6px;
+				padding: 10px;
+				font-size: 14px;
+				width: 100%;
+				box-sizing: border-box;
+				border-radius: 10px;
+				border: 1px solid var(--border);
+				background: #0b1220;
+				color: var(--text);
+				}
+
+				button {
+				cursor: pointer;
+				background: var(--accent2);
+				color: #08111d;
+				font-weight: bold;
+				border: none;
+				}
+
+				button:hover {
+				opacity: 0.9;
+				}
+
+				pre {
+				background: #020617;
+				color: #d1fae5;
+				padding: 12px;
+				font-size: 13px;
+				overflow: auto;
+				min-height: 280px;
+				border-radius: 12px;
+				border: 1px solid var(--border);
+				}
+			</style>
+		</head>
+	<body>
+		<h1>Motion Detection Debug Panel</h1>
+
+		<div class="layout">
+			<div class="card">
+				<h2>Video</h2>
+
+				<label for="mode">Display mode</label>
+				<select id="mode" onchange="updateVideoMode()">
+					<option value="debug">DEBUG</option>
+					<option value="raw">RAW</option>
+					<option value="mask">MASK</option>
+					<option value="thresh">THRESH</option>
+				</select>
+
+				<br>
+					<br>
+						<img id="video" src="/video?mode=debug" alt="video stream">
+
+							<div class="status-grid">
+								<div class="status-item">
+									<div class="label">Time</div>
+									<div class="value" id="current_time">-</div>
+								</div>
+
+								<div class="status-item">
+									<div class="label">RTSP</div>
+									<div class="value blue" id="rtsp_url">-</div>
+								</div>
+
+								<div class="status-item">
+									<div class="label">GPIO enabled</div>
+									<div class="value" id="gpio_enabled_status">-</div>
+								</div>
+
+								<div class="status-item">
+									<div class="label">GPIO state</div>
+									<div class="value" id="gpio_state">-</div>
+								</div>
+
+								<div class="status-item">
+									<div class="label">Event status</div>
+									<div class="value" id="event_status">-</div>
+								</div>
+
+								<div class="status-item">
+									<div class="label">Last event time</div>
+									<div class="value" id="last_event_time">-</div>
+								</div>
+							</div>
+						</div>
+
+			<div class="card">
+				<h2>Settings</h2>
+
+				<label>
+					RTSP URL
+					<input id="rtsp_url_input" type="text">
+            </label>
+
+				<label>
+					Min area
+					<input id="min_area" type="number">
+            </label>
+
+				<label>
+					Motion frames threshold
+					<input id="motion_frames_threshold" type="number">
+            </label>
+
+				<label>
+					Var threshold
+					<input id="var_threshold" type="number">
+            </label>
+
+				<label>
+					Event delay (sec)
+					<input id="event_delay" type="number">
+            </label>
+
+				<label>
+					Blur kernel
+					<input id="blur_kernel" type="number">
+            </label>
+
+				<label style="margin-top: 16px;">
+					<input id="gpio_enabled" type="checkbox" style="width:auto;">
+                Enable GPIO output
+            </label>
+
+				<label>
+					GPIO pin (BCM)
+					<input id="gpio_pin" type="number">
+            </label>
+
+				<label>
+					GPIO hold seconds
+					<input id="gpio_hold_seconds" type="number" step="0.1">
+            </label>
+
+				<button onclick="saveConfig()">Save config</button>
+				<button onclick="loadConfig()">Reload config</button>
+			</div>
+		</div>
+
+		<div class="card" style="margin-top: 20px;">
+			<h2>Logs</h2>
+			<pre id="logs">loading...</pre>
+		</div>
+
+		<script>
+			async function fetchStatus() {
+			try {
+			const res = await fetch('/api/status');
+			const data = await res.json();
+
+			document.getElementById('current_time').textContent = data.current_time;
+			document.getElementById('rtsp_url').textContent = data.rtsp_url;
+			document.getElementById('gpio_enabled_status').textContent = data.gpio_enabled ? 'ENABLED' : 'DISABLED';
+			document.getElementById('gpio_enabled_status').className = 'value ' + (data.gpio_enabled ? 'green' : 'yellow');
+
+			document.getElementById('gpio_state').textContent = data.gpio_state;
+			document.getElementById('gpio_state').className = 'value ' + (data.gpio_state === 'HIGH' ? 'green' : 'yellow');
+
+			document.getElementById('event_status').textContent = data.event_status ? 'TRUE' : 'FALSE';
+			document.getElementById('event_status').className = 'value ' + (data.event_status ? 'green' : 'red');
+
+			document.getElementById('last_event_time').textContent = data.last_event_time;
+
+			document.getElementById('logs').textContent = (data.logs || []).join('\n');
+			} catch (e) {
+			document.getElementById('logs').textContent = 'Ошибка чтения status: ' + e;
+			}
+			}
+
+			async function loadConfig() {
+			try {
+			const res = await fetch('/api/config');
+			const data = await res.json();
+
+			document.getElementById('rtsp_url_input').value = data.rtsp_url;
+			document.getElementById('min_area').value = data.min_area;
+			document.getElementById('motion_frames_threshold').value = data.motion_frames_threshold;
+			document.getElementById('var_threshold').value = data.var_threshold;
+			document.getElementById('event_delay').value = data.event_delay;
+			document.getElementById('blur_kernel').value = data.blur_kernel;
+			document.getElementById('gpio_enabled').checked = data.gpio_enabled;
+			document.getElementById('gpio_pin').value = data.gpio_pin;
+			document.getElementById('gpio_hold_seconds').value = data.gpio_hold_seconds;
+			} catch (e) {
+			alert('Ошибка загрузки config: ' + e);
+			}
+			}
+
+			async function saveConfig() {
+			const payload = {
+			rtsp_url: document.getElementById('rtsp_url_input').value,
+			min_area: parseInt(document.getElementById('min_area').value, 10),
+			motion_frames_threshold: parseInt(document.getElementById('motion_frames_threshold').value, 10),
+			var_threshold: parseInt(document.getElementById('var_threshold').value, 10),
+			event_delay: parseInt(document.getElementById('event_delay').value, 10),
+			blur_kernel: parseInt(document.getElementById('blur_kernel').value, 10),
+			gpio_enabled: document.getElementById('gpio_enabled').checked,
+			gpio_pin: parseInt(document.getElementById('gpio_pin').value, 10),
+			gpio_hold_seconds: parseFloat(document.getElementById('gpio_hold_seconds').value),
+			gpio_active_high: true
+			};
+
+			try {
+			const res = await fetch('/api/config', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(payload)
+			});
+
+			const data = await res.json();
+			alert('Saved: ' + JSON.stringify(data));
+			} catch (e) {
+			alert('Ошибка сохранения config: ' + e);
+			}
+			}
+
+			function updateVideoMode() {
+			const mode = document.getElementById('mode').value;
+			document.getElementById('video').src = '/video?mode=' + mode + '&_ts=' + Date.now();
+			}
+
+			setInterval(fetchStatus, 1000);
+			loadConfig();
+			fetchStatus();
+		</script>
+	</body>
+</html>

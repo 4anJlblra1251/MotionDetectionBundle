@@ -5,7 +5,7 @@ import threading
 from collections import deque
 
 try:
-    from gpiozero import OutputDevice   
+    from gpiozero import OutputDevice
 except Exception:
     OutputDevice = None
 
@@ -21,9 +21,6 @@ class MotionDetector:
         self.last_mask = None
         self.last_thresh = None
 
-        self.max_area = 0
-        self.contours_count = 0
-        self.motion_frames = 0
         self.event_detected = False
         self.last_event_time = 0.0
 
@@ -33,6 +30,7 @@ class MotionDetector:
 
         self.gpio_device = None
         self.gpio_busy = False
+        self.gpio_state = "LOW"
 
         self.log_buffer = deque(maxlen=12)
 
@@ -41,8 +39,7 @@ class MotionDetector:
 
     def add_log(self, message: str):
         timestamp = time.strftime("%H:%M:%S")
-        with self.lock:
-            self.log_buffer.append(f"[{timestamp}] {message}")
+        self.log_buffer.append(f"[{timestamp}] {message}")
 
     def load_config(self):
         with open(self.config_path, "r", encoding="utf-8") as f:
@@ -76,12 +73,14 @@ class MotionDetector:
                 pass
             self.gpio_device = None
 
+        self.gpio_state = "LOW"
+
         if not self.config.get("gpio_enabled", False):
-            self.add_log("GPIO отключен в конфиге")
+            self.add_log("GPIO disabled")
             return
 
         if OutputDevice is None:
-            self.add_log("gpiozero недоступен, GPIO не инициализирован")
+            self.add_log("gpiozero unavailable")
             return
 
         pin = int(self.config.get("gpio_pin", 17))
@@ -93,9 +92,9 @@ class MotionDetector:
                 active_high=active_high,
                 initial_value=False
             )
-            self.add_log(f"GPIO инициализирован: BCM {pin}, active_high={active_high}")
+            self.add_log(f"GPIO init: BCM {pin}")
         except Exception as e:
-            self.add_log(f"Ошибка инициализации GPIO: {e}")
+            self.add_log(f"GPIO init error: {e}")
             self.gpio_device = None
 
     def trigger_gpio(self):
@@ -113,18 +112,20 @@ class MotionDetector:
         def worker():
             self.gpio_busy = True
             try:
-                self.add_log(f"GPIO ON на {hold_seconds:.1f} сек")
                 self.gpio_device.on()
+                self.gpio_state = "HIGH"
+                self.add_log(f"GPIO HIGH for {hold_seconds:.1f}s")
                 time.sleep(hold_seconds)
             except Exception as e:
-                self.add_log(f"Ошибка работы GPIO: {e}")
+                self.add_log(f"GPIO runtime error: {e}")
             finally:
                 try:
                     self.gpio_device.off()
                 except Exception:
                     pass
+                self.gpio_state = "LOW"
                 self.gpio_busy = False
-                self.add_log("GPIO OFF")
+                self.add_log("GPIO LOW")
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -136,9 +137,9 @@ class MotionDetector:
         ok = self.cap.isOpened()
 
         if ok:
-            self.add_log("RTSP поток открыт")
+            self.add_log("RTSP opened")
         else:
-            self.add_log("Не удалось открыть RTSP поток")
+            self.add_log("RTSP open failed")
 
         return ok
 
@@ -152,10 +153,13 @@ class MotionDetector:
             ret, frame = self.cap.read()
 
             if not ret:
-                self.add_log("Ошибка чтения кадра, повторное открытие потока")
+                self.add_log("Frame read error, reconnect")
                 time.sleep(1)
                 self.open_stream()
                 continue
+
+            should_fire_event = False
+            event_log_message = None
 
             with self.lock:
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -182,7 +186,6 @@ class MotionDetector:
                 debug_frame = frame.copy() if self.debug else None
                 motion = False
                 max_area = 0
-                contours_count = len(contours)
 
                 for cnt in contours:
                     area = cv2.contourArea(cnt)
@@ -206,6 +209,9 @@ class MotionDetector:
                                 2
                             )
 
+                if not hasattr(self, "motion_frames"):
+                    self.motion_frames = 0
+
                 if motion:
                     self.motion_frames += 1
                 else:
@@ -218,23 +224,14 @@ class MotionDetector:
                     if now - self.last_event_time > self.config["event_delay"]:
                         self.event_detected = True
                         self.last_event_time = now
-
-                        self.add_log(
-                            f"EVENT area={int(max_area)} contours={contours_count} "
-                            f"frames={self.motion_frames}"
-                        )
-
-                        self.trigger_gpio()
+                        should_fire_event = True
+                        event_log_message = f"EVENT area={int(max_area)}"
 
                 if self.debug:
-                    cv2.putText(debug_frame, f"max_area={int(max_area)}", (10, 25),
+                    cv2.putText(debug_frame, f"event={self.event_detected}", (10, 25),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                    cv2.putText(debug_frame, f"contours={contours_count}", (10, 55),
+                    cv2.putText(debug_frame, f"gpio={self.gpio_state}", (10, 55),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                    cv2.putText(debug_frame, f"motion_frames={self.motion_frames}", (10, 85),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                    cv2.putText(debug_frame, f"event={self.event_detected}", (10, 115),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
                     self.last_frame = frame
                     self.last_debug_frame = debug_frame
@@ -246,19 +243,23 @@ class MotionDetector:
                     self.last_mask = None
                     self.last_thresh = None
 
-                self.max_area = max_area
-                self.contours_count = contours_count
+            if should_fire_event:
+                self.add_log(event_log_message)
+                self.trigger_gpio()
 
     def get_status(self):
         with self.lock:
             return {
-                "max_area": int(self.max_area),
-                "contours_count": int(self.contours_count),
-                "motion_frames": int(self.motion_frames),
-                "event_detected": bool(self.event_detected),
-                "last_event_time": float(self.last_event_time),
-                "gpio_busy": bool(self.gpio_busy),
-                "gpio_initialized": self.gpio_device is not None,
+                "current_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "rtsp_url": self.config.get("rtsp_url", ""),
+                "gpio_enabled": bool(self.config.get("gpio_enabled", False)),
+                "gpio_pin": int(self.config.get("gpio_pin", 17)),
+                "gpio_state": self.gpio_state,
+                "event_status": bool(self.event_detected),
+                "last_event_time": (
+                    time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.last_event_time))
+                    if self.last_event_time > 0 else "-"
+                ),
                 "config": self.config,
                 "logs": list(self.log_buffer)
             }
