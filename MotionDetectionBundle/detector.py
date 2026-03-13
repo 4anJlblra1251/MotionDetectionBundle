@@ -1,9 +1,39 @@
-import cv2
+import os
+import contextlib
 import time
 import threading
-import os
 from collections import deque
 from urllib.parse import urlparse
+
+os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
+os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "-8")
+os.environ.setdefault("FFMPEG_LOG_LEVEL", "quiet")
+
+import cv2
+
+_STDERR_SILENCE_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def silence_stderr():
+    if not hasattr(os, "dup") or not hasattr(os, "dup2"):
+        yield
+        return
+
+    with _STDERR_SILENCE_LOCK:
+        saved_stderr = None
+        devnull = None
+        try:
+            saved_stderr = os.dup(2)
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, 2)
+            yield
+        finally:
+            if saved_stderr is not None:
+                os.dup2(saved_stderr, 2)
+                os.close(saved_stderr)
+            if devnull is not None:
+                os.close(devnull)
 
 try:
     from gpiozero import OutputDevice
@@ -192,7 +222,8 @@ class MotionDetector:
             self.cap.release()
 
         rtsp_url = os.path.expandvars(self.config["rtsp_url"])
-        self.cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+        with silence_stderr():
+            self.cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
         ok = self.cap.isOpened()
 
         if ok:
