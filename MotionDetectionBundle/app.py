@@ -12,6 +12,7 @@ app = Flask(__name__)
 manager = None
 SETUP_MODE = False
 DEBUG_MODE = False
+HWTEST_MODE = False
 
 DEFAULT_CAMERA_CONFIG = {
     "rtsp_url": "rtsp://user:pass@127.0.0.1:554/stream",
@@ -364,6 +365,9 @@ def config():
 
 @app.route("/api/test_mode", methods=["POST"])
 def test_mode_api():
+    if not HWTEST_MODE:
+        return jsonify({"error": "test mode API is available only with --hwtest"}), 403
+
     payload = request.json or {}
     camera_id = payload.get("camera_id") or manager.get_active_camera_id()
     detector = manager.get_detector(camera_id)
@@ -436,6 +440,9 @@ def draw_console_ui(stdscr, manager_obj):
         selected_idx = max(0, min(selected_idx, len(cameras) - 1))
         selected_camera = cameras[selected_idx]
 
+        if not HWTEST_MODE and selected_tab == "test":
+            selected_tab = "overview"
+
         if selected_tab == "camera":
             manager_obj.set_active_camera(selected_camera["id"])
             status = manager_obj.get_status(selected_camera["id"])
@@ -450,7 +457,8 @@ def draw_console_ui(stdscr, manager_obj):
         for i, cam in enumerate(cameras):
             is_active = selected_tab == "camera" and i == selected_idx
             tab_items.append(f"[{cam['name']}]" if is_active else cam["name"])
-        tab_items.append("[Test]" if selected_tab == "test" else "Test")
+        if HWTEST_MODE:
+            tab_items.append("[Test]" if selected_tab == "test" else "Test")
         tab_items.append("[Settings]" if selected_tab == "settings" else "Settings")
         tabs = " | ".join(tab_items)
         stdscr.addstr(0, 1, tabs[:w - 2], curses.A_REVERSE)
@@ -516,7 +524,7 @@ def draw_console_ui(stdscr, manager_obj):
 
             for i, entry in enumerate(logs[-log_max_lines:]):
                 stdscr.addstr(log_y + i, 3, entry[:w - 6])
-        elif selected_tab == "test":
+        elif HWTEST_MODE and selected_tab == "test":
             manager_obj.set_active_camera(selected_camera["id"])
             detector = manager_obj.get_detector(selected_camera["id"])
             status = detector.get_status() if detector else {}
@@ -546,7 +554,7 @@ def draw_console_ui(stdscr, manager_obj):
             stdscr.addstr(7, 3, "Use --override KEY=VALUE to override env variables (e.g. passwords).")
             stdscr.addstr(8, 3, "Example: --override CAMERA_1_RTSP_PASSWORD=secret")
 
-        footer = "TAB - overview/camera | M - test tab | P - settings | ←/→ - camera | Q - exit"
+        footer = "TAB - overview/camera | M - test tab | P - settings | ←/→ - camera | Q - exit" if HWTEST_MODE else "TAB - overview/camera | P - settings | ←/→ - camera | Q - exit"
         stdscr.addstr(h - 1, max(0, (w - len(footer)) // 2), footer, curses.A_REVERSE)
 
         stdscr.refresh()
@@ -578,10 +586,10 @@ def draw_console_ui(stdscr, manager_obj):
             else:
                 selected_tab = "settings"
 
-        if ch in (ord('m'), ord('M')):
+        if HWTEST_MODE and ch in (ord('m'), ord('M')):
             selected_tab = "test"
 
-        if selected_tab == "test":
+        if HWTEST_MODE and selected_tab == "test":
             detector = manager_obj.get_detector(selected_camera["id"])
             if detector and ch in (ord('t'), ord('T')):
                 detector.set_test_mode(not detector.test_mode_enabled)
@@ -604,18 +612,20 @@ def run_normal_console(manager_obj):
 
 
 def main():
-    global manager, SETUP_MODE, DEBUG_MODE
+    global manager, SETUP_MODE, DEBUG_MODE, HWTEST_MODE
 
     parser = argparse.ArgumentParser(description="Motion detection service")
     parser.add_argument("--debug", action="store_true", help="run in debug mode with web UI")
     parser.add_argument("--setup", action="store_true", help="run setup mode with web UI and camera creation")
     parser.add_argument("--override", action="append", help="override env vars: KEY=VALUE")
+    parser.add_argument("--hwtest", action="store_true", help="enable hardware test controls in curses UI")
     args = parser.parse_args()
 
     apply_overrides(args.override)
 
     SETUP_MODE = args.setup
     DEBUG_MODE = args.debug
+    HWTEST_MODE = args.hwtest
 
     manager = MultiCameraManager("config.json", debug=args.debug)
     manager.start()
