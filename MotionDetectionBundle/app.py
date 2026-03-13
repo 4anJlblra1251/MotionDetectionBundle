@@ -4,23 +4,181 @@ import threading
 import argparse
 import time
 import curses
+import json
+from copy import deepcopy
 
 app = Flask(__name__)
-detector = None
+manager = None
+SETUP_MODE = False
+
+DEFAULT_CAMERA_CONFIG = {
+    "rtsp_url": "rtsp://user:pass@127.0.0.1:554/stream",
+    "min_area": 12000,
+    "motion_frames_threshold": 5,
+    "var_threshold": 60,
+    "event_delay": 5,
+    "blur_kernel": 7,
+    "event_hold_seconds": 3,
+    "gpio_enabled": False,
+    "gpio_pin": 17,
+    "gpio_hold_seconds": 3.0,
+    "gpio_active_high": True,
+}
+
+
+class MultiCameraManager:
+    def __init__(self, config_path="config.json", debug=False):
+        self.config_path = config_path
+        self.debug = debug
+        self.lock = threading.Lock()
+        self.detectors = {}
+        self.threads = {}
+        self.config = self._load_config_file()
+        self._sync_detectors_with_config(start_threads=False)
+
+    def _normalize_config(self, raw):
+        if "cameras" in raw:
+            cameras = raw.get("cameras", [])
+            active = raw.get("active_camera") or (cameras[0]["id"] if cameras else None)
+            return {
+                "active_camera": active,
+                "cameras": cameras,
+            }
+
+        # Миграция старого формата
+        migrated_camera = {
+            "id": "camera-1",
+            "name": "Camera 1",
+            "config": {**DEFAULT_CAMERA_CONFIG, **raw},
+        }
+        return {
+            "active_camera": "camera-1",
+            "cameras": [migrated_camera],
+        }
+
+    def _load_config_file(self):
+        with open(self.config_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return self._normalize_config(raw)
+
+    def _save_config_file(self):
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(self.config, f, indent=2, ensure_ascii=False)
+
+    def _sync_detectors_with_config(self, start_threads=True):
+        existing_ids = set(self.detectors.keys())
+        config_ids = {camera["id"] for camera in self.config["cameras"]}
+
+        for removed_id in existing_ids - config_ids:
+            detector = self.detectors.pop(removed_id)
+            detector.running = False
+            if detector.cap is not None:
+                detector.cap.release()
+            self.threads.pop(removed_id, None)
+
+        for camera in self.config["cameras"]:
+            camera_id = camera["id"]
+            merged_config = {**DEFAULT_CAMERA_CONFIG, **camera["config"]}
+
+            if camera_id in self.detectors:
+                self.detectors[camera_id].update_config(merged_config)
+                continue
+
+            detector = MotionDetector(camera_id=camera_id, config=merged_config, debug=self.debug)
+            self.detectors[camera_id] = detector
+            if start_threads:
+                thread = threading.Thread(target=detector.process_loop, daemon=True)
+                thread.start()
+                self.threads[camera_id] = thread
+
+    def start(self):
+        with self.lock:
+            for camera_id, detector in self.detectors.items():
+                if camera_id in self.threads and self.threads[camera_id].is_alive():
+                    continue
+                thread = threading.Thread(target=detector.process_loop, daemon=True)
+                thread.start()
+                self.threads[camera_id] = thread
+
+    def list_cameras(self):
+        with self.lock:
+            return deepcopy(self.config["cameras"])
+
+    def add_camera(self, name, camera_config=None):
+        with self.lock:
+            next_number = len(self.config["cameras"]) + 1
+            camera_id = f"camera-{next_number}"
+            while any(c["id"] == camera_id for c in self.config["cameras"]):
+                next_number += 1
+                camera_id = f"camera-{next_number}"
+
+            new_camera = {
+                "id": camera_id,
+                "name": name or f"Camera {next_number}",
+                "config": {**DEFAULT_CAMERA_CONFIG, **(camera_config or {})},
+            }
+            self.config["cameras"].append(new_camera)
+            if not self.config.get("active_camera"):
+                self.config["active_camera"] = camera_id
+            self._save_config_file()
+            self._sync_detectors_with_config(start_threads=True)
+            return deepcopy(new_camera)
+
+    def get_camera(self, camera_id):
+        with self.lock:
+            for camera in self.config["cameras"]:
+                if camera["id"] == camera_id:
+                    return deepcopy(camera)
+        return None
+
+    def get_active_camera_id(self):
+        with self.lock:
+            return self.config.get("active_camera")
+
+    def set_active_camera(self, camera_id):
+        with self.lock:
+            if not any(c["id"] == camera_id for c in self.config["cameras"]):
+                return False
+            self.config["active_camera"] = camera_id
+            self._save_config_file()
+            return True
+
+    def get_detector(self, camera_id=None):
+        with self.lock:
+            effective_id = camera_id or self.config.get("active_camera")
+            return self.detectors.get(effective_id)
+
+    def get_status(self, camera_id=None):
+        detector = self.get_detector(camera_id)
+        if detector is None:
+            return {"error": "camera not found"}
+        return detector.get_status()
+
+    def update_camera_config(self, camera_id, new_config):
+        with self.lock:
+            for camera in self.config["cameras"]:
+                if camera["id"] == camera_id:
+                    camera["config"] = {**DEFAULT_CAMERA_CONFIG, **new_config}
+                    self._save_config_file()
+                    self._sync_detectors_with_config(start_threads=False)
+                    return True
+        return False
 
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", setup_mode=SETUP_MODE)
 
 
 @app.route("/video")
 def video():
     mode = request.args.get("mode", "debug")
+    camera_id = request.args.get("camera_id")
 
     def generate():
         while True:
-            frame = detector.get_jpeg_frame(mode=mode)
+            detector = manager.get_detector(camera_id)
+            frame = detector.get_jpeg_frame(mode=mode) if detector else None
             if frame is None:
                 time.sleep(0.05)
                 continue
@@ -33,18 +191,61 @@ def video():
     return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
+@app.route("/api/cameras", methods=["GET", "POST"])
+def cameras_api():
+    if request.method == "GET":
+        return jsonify({
+            "cameras": manager.list_cameras(),
+            "active_camera": manager.get_active_camera_id(),
+            "setup_mode": SETUP_MODE,
+        })
+
+    if not SETUP_MODE:
+        return jsonify({"error": "adding cameras allowed only in --setup mode"}), 403
+
+    payload = request.json or {}
+    name = payload.get("name")
+    camera_config = payload.get("config") or {}
+    camera = manager.add_camera(name=name, camera_config=camera_config)
+    return jsonify(camera)
+
+
+@app.route("/api/active_camera", methods=["POST"])
+def set_active_camera():
+    payload = request.json or {}
+    camera_id = payload.get("camera_id")
+    if not camera_id:
+        return jsonify({"error": "camera_id is required"}), 400
+
+    ok = manager.set_active_camera(camera_id)
+    if not ok:
+        return jsonify({"error": "camera not found"}), 404
+
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/status")
 def status():
-    return jsonify(detector.get_status())
+    camera_id = request.args.get("camera_id")
+    return jsonify(manager.get_status(camera_id))
 
 
 @app.route("/api/config", methods=["GET", "POST"])
 def config():
-    if request.method == "GET":
-        return jsonify(detector.config)
+    camera_id = request.args.get("camera_id") or manager.get_active_camera_id()
+    if not camera_id:
+        return jsonify({"error": "no cameras configured"}), 404
 
-    new_config = request.json
-    detector.save_config(new_config)
+    if request.method == "GET":
+        camera = manager.get_camera(camera_id)
+        if camera is None:
+            return jsonify({"error": "camera not found"}), 404
+        return jsonify(camera["config"])
+
+    new_config = request.json or {}
+    ok = manager.update_camera_config(camera_id, new_config)
+    if not ok:
+        return jsonify({"error": "camera not found"}), 404
     return jsonify({"status": "ok"})
 
 
@@ -63,10 +264,12 @@ def draw_box(stdscr, y, x, h, w, title):
     stdscr.addch(y + h - 1, x + w - 1, curses.ACS_LRCORNER)
 
 
-def draw_console_ui(stdscr, detector_obj):
+def draw_console_ui(stdscr, manager_obj):
     curses.curs_set(0)
     stdscr.nodelay(True)
     stdscr.timeout(500)
+
+    selected_idx = 0
 
     if curses.has_colors():
         curses.start_color()
@@ -77,28 +280,40 @@ def draw_console_ui(stdscr, detector_obj):
         curses.init_pair(4, curses.COLOR_YELLOW, -1)
 
     while True:
+        cameras = manager_obj.list_cameras()
+        if not cameras:
+            stdscr.erase()
+            stdscr.addstr(0, 0, "Нет камер в config.json. Используйте --setup.")
+            stdscr.refresh()
+            time.sleep(0.5)
+            continue
+
+        selected_idx = max(0, min(selected_idx, len(cameras) - 1))
+        selected_camera = cameras[selected_idx]
+        manager_obj.set_active_camera(selected_camera["id"])
+        status = manager_obj.get_status(selected_camera["id"])
+
         stdscr.erase()
         h, w = stdscr.getmaxyx()
-        status = detector_obj.get_status()
 
-        title = " Motion Detection Service "
-        stdscr.addstr(0, max(0, (w - len(title)) // 2), title, curses.A_REVERSE)
+        tabs = " | ".join(
+            [f"[{cam['name']}]" if i == selected_idx else cam["name"] for i, cam in enumerate(cameras)]
+        )
+        stdscr.addstr(0, 1, tabs[:w - 2], curses.A_REVERSE)
 
         top_h = 11
         left_w = max(50, w // 2)
         right_w = w - left_w - 4
 
-        draw_box(stdscr, 1, 1, top_h, left_w, "SYSTEM")
+        draw_box(stdscr, 1, 1, top_h, left_w, f"SYSTEM ({selected_camera['id']})")
         draw_box(stdscr, 1, left_w + 2, top_h, right_w, "EVENT / GPIO")
         draw_box(stdscr, top_h + 1, 1, h - top_h - 3, w - 2, "LOGS")
 
-        # SYSTEM
         stdscr.addstr(3, 3, f"Time: {status['current_time']}")
         stdscr.addstr(4, 3, f"RTSP: {status['rtsp_url'][:left_w - 10]}")
         stdscr.addstr(5, 3, f"GPIO enabled: {status['gpio_enabled']}")
         stdscr.addstr(6, 3, f"GPIO pin: {status['gpio_pin']}")
 
-        # EVENT / GPIO
         event_str = "TRUE" if status["event_status"] else "FALSE"
         gpio_str = status["gpio_state"]
 
@@ -113,7 +328,6 @@ def draw_console_ui(stdscr, detector_obj):
 
         stdscr.addstr(7, left_w + 4, f"Last event: {status['last_event_time']}")
 
-        # LOGS
         logs = status.get("logs", [])
         log_y = top_h + 3
         log_max_lines = h - log_y - 2
@@ -121,7 +335,7 @@ def draw_console_ui(stdscr, detector_obj):
         for i, entry in enumerate(logs[-log_max_lines:]):
             stdscr.addstr(log_y + i, 3, entry[:w - 6])
 
-        footer = "Q - exit"
+        footer = "TAB/←/→ - смена камеры | Q - exit"
         stdscr.addstr(h - 1, max(0, (w - len(footer)) // 2), footer, curses.A_REVERSE)
 
         stdscr.refresh()
@@ -129,31 +343,37 @@ def draw_console_ui(stdscr, detector_obj):
         ch = stdscr.getch()
         if ch in (ord('q'), ord('Q')):
             break
+        if ch in (9, curses.KEY_RIGHT):
+            selected_idx = (selected_idx + 1) % len(cameras)
+        if ch == curses.KEY_LEFT:
+            selected_idx = (selected_idx - 1) % len(cameras)
 
 
-def run_normal_console(detector_obj):
-    curses.wrapper(draw_console_ui, detector_obj)
+def run_normal_console(manager_obj):
+    curses.wrapper(draw_console_ui, manager_obj)
 
 
 def main():
-    global detector
+    global manager, SETUP_MODE
 
     parser = argparse.ArgumentParser(description="Motion detection service")
     parser.add_argument("--debug", action="store_true", help="run in debug mode with web UI")
+    parser.add_argument("--setup", action="store_true", help="run setup mode with web UI and camera creation")
     args = parser.parse_args()
 
-    detector = MotionDetector("config.json", debug=args.debug)
+    SETUP_MODE = args.setup
 
-    t = threading.Thread(target=detector.process_loop, daemon=True)
-    t.start()
+    manager = MultiCameraManager("config.json", debug=(args.debug or args.setup))
+    manager.start()
 
-    if args.debug:
-        print("Запуск в режиме отладки")
+    if args.debug or args.setup:
+        mode_name = "setup" if args.setup else "debug"
+        print(f"Запуск в режиме {mode_name}")
         app.run(host="0.0.0.0", port=5000, debug=False)
     else:
         print("Запуск в обычном режиме")
         try:
-            run_normal_console(detector)
+            run_normal_console(manager)
         except KeyboardInterrupt:
             print("Остановка")
 

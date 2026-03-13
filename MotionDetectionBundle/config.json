@@ -1,14 +1,22 @@
 {
-    "rtsp_url": "rtsp://admin:Engineer_ST-SA2651@192.168.10.101:554/unicast/c1/s1/live",
-    "min_area": 12000,
-    "motion_frames_threshold": 5,
-    "var_threshold": 60,
-    "event_delay": 5,
-    "blur_kernel": 7,
-    "event_hold_seconds": 3,
-    
-    "gpio_enabled": false,
-    "gpio_pin": 17,
-    "gpio_hold_seconds": 3.0,
-    "gpio_active_high": true
+  "active_camera": "camera-1",
+  "cameras": [
+    {
+      "id": "camera-1",
+      "name": "Camera 1",
+      "config": {
+        "rtsp_url": "rtsp://admin:Engineer_ST-SA2651@192.168.10.101:554/unicast/c1/s1/live",
+        "min_area": 12000,
+        "motion_frames_threshold": 5,
+        "var_threshold": 60,
+        "event_delay": 5,
+        "blur_kernel": 7,
+        "event_hold_seconds": 3,
+        "gpio_enabled": false,
+        "gpio_pin": 17,
+        "gpio_hold_seconds": 3.0,
+        "gpio_active_high": true
+      }
+    }
+  ]
 }
