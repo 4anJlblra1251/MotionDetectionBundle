@@ -172,16 +172,22 @@ class MotionDetector:
         self.add_log("GPIO forced LOW due to connection error")
 
     def _exit_safety_mode(self):
-        if not self.safety_disabled:
-            return
-
         self.safety_disabled = False
         self.connection_ok = True
         self.event_detection_enabled = True
         self.event_detected = False
         self.motion_frames = 0
         self.last_motion_seen_time = 0.0
-        self.add_log("Camera stream restored, safety mode disabled")
+
+    def _mark_stream_alive(self):
+        if self.safety_disabled:
+            self._exit_safety_mode()
+            self.add_log("Camera stream restored, safety mode disabled")
+            return
+
+        if not self.connection_ok:
+            self.connection_ok = True
+            self.add_log("Camera stream is alive")
 
     def trigger_gpio(self):
         if not self.event_detection_enabled:
@@ -274,8 +280,7 @@ class MotionDetector:
                     time.sleep(max(0.1, float(self.config.get("reconnect_retry_interval", 1.0))))
                     break
 
-                if not self.connection_ok:
-                    self._exit_safety_mode()
+                self._mark_stream_alive()
 
                 should_fire_event = False
                 event_log_message = None
