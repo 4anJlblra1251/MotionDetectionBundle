@@ -137,7 +137,6 @@
         <div>
           <h3>Menu</h3>
           <p class="hint">Клик по видео добавляет точки. После 4-й точки контур замыкается автоматически.</p>
-          <button id="addPointBtn" onclick="enableAddPointMode()" disabled>Add point</button>
           <button class="warning" onclick="startNewContour()">Start new contour</button>
           <button class="danger" onclick="closeDeadzoneSetup()">Cancel</button>
           <button style="margin-top:24px;" onclick="finishDeadzoneSetup()">Finish setup</button>
@@ -155,7 +154,7 @@ let currentMenuTab = 'debug';
 let deadzones = [];
 let setupDraftPoints = [];
 let selectedContourIndex = -1;
-let addPointMode = false;
+let contourCreationActive = false;
 let draggingPoint = null;
 
 function switchMenuTab(tab) {
@@ -363,7 +362,6 @@ function renderDeadzoneList() {
     item.appendChild(btn);
     list.appendChild(item);
   });
-  document.getElementById('addPointBtn').disabled = selectedContourIndex < 0;
   document.getElementById('deadzoneIntersectWarning').textContent = hasContourIntersections() ? 'Есть пересечение контуров deadzone.' : '';
 }
 
@@ -378,11 +376,19 @@ function openDeadzoneSetup() {
 
 function closeDeadzoneSetup() {
   document.getElementById('deadzoneSetupView').classList.add('hidden');
-  setupDraftPoints = []; selectedContourIndex = -1; addPointMode = false; draggingPoint = null;
+  setupDraftPoints = []; selectedContourIndex = -1; contourCreationActive = false; draggingPoint = null;
 }
 
-function startNewContour(){ setupDraftPoints = []; selectedContourIndex = -1; addPointMode = false; renderDeadzoneOverlay(); }
-function enableAddPointMode(){ if (selectedContourIndex >= 0) addPointMode = true; }
+function startNewContour(){
+  if (contourCreationActive || setupDraftPoints.length) {
+    alert('Сначала завершите текущий контур (4 точки).');
+    return;
+  }
+  setupDraftPoints = [];
+  selectedContourIndex = -1;
+  contourCreationActive = true;
+  renderDeadzoneOverlay();
+}
 
 async function finishDeadzoneSetup() {
   if (!currentCameraId) return;
@@ -418,16 +424,13 @@ function bindDeadzoneEvents(){
   overlay.addEventListener('click', (evt) => {
     if (draggingPoint) return;
     const pt = getVideoRelativePoint(evt);
-    if (addPointMode && selectedContourIndex >= 0) {
-      deadzones[selectedContourIndex].push(pt);
-      addPointMode = false;
-    } else {
-      setupDraftPoints.push(pt);
-      if (setupDraftPoints.length >= 4) {
-        deadzones.push([...setupDraftPoints]);
-        selectedContourIndex = deadzones.length - 1;
-        setupDraftPoints = [];
-      }
+    if (!contourCreationActive) return;
+    setupDraftPoints.push(pt);
+    if (setupDraftPoints.length >= 4) {
+      deadzones.push([...setupDraftPoints]);
+      selectedContourIndex = deadzones.length - 1;
+      setupDraftPoints = [];
+      contourCreationActive = false;
     }
     renderDeadzoneList();
     renderDeadzoneOverlay();
@@ -484,7 +487,7 @@ function renderDeadzoneOverlay(){
   deadzones.forEach((zone, idx) => {
     const points = zone.map(p=>`${p.x*rect.width/100},${p.y*rect.height/100}`).join(' ');
     const poly = document.createElementNS('http://www.w3.org/2000/svg','polygon');
-    poly.setAttribute('points', points); poly.setAttribute('fill','rgba(255,0,0,0.2)'); poly.setAttribute('stroke','#ef4444'); poly.setAttribute('stroke-width','2');
+    poly.setAttribute('points', points); poly.setAttribute('fill','rgba(255,0,0,0.06)'); poly.setAttribute('stroke','#ef4444'); poly.setAttribute('stroke-width','2');
     poly.addEventListener('click', ()=>{ selectedContourIndex = idx; renderDeadzoneList(); });
     overlay.appendChild(poly);
 
@@ -506,6 +509,16 @@ function renderDeadzoneOverlay(){
     draft.setAttribute('points', setupDraftPoints.map(p=>`${p.x*rect.width/100},${p.y*rect.height/100}`).join(' '));
     draft.setAttribute('fill','none'); draft.setAttribute('stroke','#38bdf8'); draft.setAttribute('stroke-width','2');
     overlay.appendChild(draft);
+
+    setupDraftPoints.forEach((p) => {
+      const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      c.setAttribute('cx', p.x * rect.width / 100);
+      c.setAttribute('cy', p.y * rect.height / 100);
+      c.setAttribute('r', 5);
+      c.setAttribute('fill', '#38bdf8');
+      c.setAttribute('stroke', '#111');
+      overlay.appendChild(c);
+    });
   }
 }
 
