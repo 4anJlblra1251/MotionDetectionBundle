@@ -60,6 +60,19 @@ sudo journalctl -u motion-detection.service -f
 motion-detection
 motion-detection --debug
 motion-detection --setup
+motion-detection --update
+```
+
+`--update` выполняет безопасное обновление из git:
+- если `motion-detection.service` запущен, он будет остановлен;
+- выполняется `git fetch --all --prune` + `git pull --ff-only` в `/opt/motion-detection`;
+- при наличии обновляются Python-зависимости из `requirements-rpi.txt`;
+- сервис запускается обратно.
+
+События обновления логируются через `logger` (tag: `motion-detection-update`) и доступны в journald:
+
+```bash
+sudo journalctl -t motion-detection-update -f
 ```
 
 Эта команда запускает `/opt/motion-detection/app.py` через установленный venv и всегда использует конфиг из `/etc/motion-detection/config.json`.
