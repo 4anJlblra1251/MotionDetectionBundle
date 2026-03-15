@@ -321,8 +321,22 @@ class MotionDetector:
             self.cap.release()
 
         rtsp_url = os.path.expandvars(self.config["rtsp_url"])
+        previous_capture_options = os.environ.get("OPENCV_FFMPEG_CAPTURE_OPTIONS")
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+            "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|max_delay;0|reorder_queue_size;0"
+        )
+
         with silence_stderr():
             self.cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+
+        if previous_capture_options is None:
+            os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
+        else:
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = previous_capture_options
+
+        if self.cap is not None:
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
         ok = self.cap.isOpened()
 
         if not ok:
@@ -390,6 +404,19 @@ class MotionDetector:
 
         cv2.addWeighted(fill_overlay, 0.18, debug_frame, 0.82, 0, debug_frame)
 
+    def _read_latest_frame(self):
+        if self.cap is None:
+            return False, None
+
+        grabbed = 0
+        while grabbed < 2:
+            ok = self.cap.grab()
+            if not ok:
+                break
+            grabbed += 1
+
+        return self.cap.retrieve()
+
     def process_loop(self):
         self.running = True
 
@@ -398,7 +425,7 @@ class MotionDetector:
                 continue
 
             while self.running:
-                ret, frame = self.cap.read()
+                ret, frame = self._read_latest_frame()
 
                 if not ret or frame is None:
                     self._enter_safety_mode("Frame read error")
