@@ -369,10 +369,14 @@ class MotionDetector:
 
     def _draw_deadzones(self, debug_frame, width, height):
         deadzones = self.config.get("deadzones", [])
+        if not deadzones:
+            return
+
+        fill_overlay = debug_frame.copy()
         for idx, zone in enumerate(deadzones, start=1):
             poly = self._polygon_to_pixels(zone, width, height)
+            cv2.fillPoly(fill_overlay, [poly], (0, 0, 255))
             cv2.polylines(debug_frame, [poly], True, (0, 0, 255), 2)
-            cv2.fillPoly(debug_frame, [poly], (0, 0, 80))
             label_point = tuple(poly[0])
             cv2.putText(
                 debug_frame,
@@ -383,6 +387,8 @@ class MotionDetector:
                 (0, 0, 255),
                 2,
             )
+
+        cv2.addWeighted(fill_overlay, 0.18, debug_frame, 0.82, 0, debug_frame)
 
     def process_loop(self):
         self.running = True
