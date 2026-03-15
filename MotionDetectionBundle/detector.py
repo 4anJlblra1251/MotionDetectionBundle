@@ -10,6 +10,7 @@ os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "-8")
 os.environ.setdefault("FFMPEG_LOG_LEVEL", "quiet")
 
 import cv2
+import numpy as np
 
 _STDERR_SILENCE_LOCK = threading.Lock()
 
@@ -96,6 +97,7 @@ class MotionDetector:
         self.log_buffer = deque(maxlen=30)
         self.config = {}
         self._primed_frame = None
+        self.deadzone_overlay_enabled = True
 
         self.update_config(config, add_log=False)
 
@@ -103,9 +105,31 @@ class MotionDetector:
         timestamp = time.strftime("%H:%M:%S")
         self.log_buffer.append(f"[{timestamp}] [{self.camera_id}] {message}")
 
+    def normalize_deadzones(self, deadzones):
+        normalized = []
+        if not isinstance(deadzones, list):
+            return normalized
+
+        for zone in deadzones:
+            if not isinstance(zone, list):
+                continue
+            points = []
+            for pt in zone:
+                if not isinstance(pt, dict):
+                    continue
+                x = pt.get("x")
+                y = pt.get("y")
+                if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                    points.append({"x": float(x), "y": float(y)})
+            if len(points) >= 4:
+                normalized.append(points)
+        return normalized
+
     def update_config(self, new_config: dict, add_log=True):
         with self.lock:
-            self.config = dict(new_config)
+            merged = dict(new_config)
+            merged["deadzones"] = self.normalize_deadzones(merged.get("deadzones", []))
+            self.config = merged
             self.init_detector()
         if add_log:
             self.add_log("Конфиг обновлен")
@@ -249,6 +273,10 @@ class MotionDetector:
             state = "enabled" if self._runtime_event_detection_enabled else "disabled"
             self.add_log(f"Auto detection {state}")
 
+    def set_deadzone_overlay(self, enabled: bool):
+        with self.lock:
+            self.deadzone_overlay_enabled = bool(enabled)
+
     def set_gpio_manual(self, state: str):
         state = (state or "").upper()
         if state not in ("HIGH", "LOW"):
@@ -329,6 +357,33 @@ class MotionDetector:
 
         return False
 
+    def _polygon_to_pixels(self, zone, width, height):
+        points = []
+        for pt in zone:
+            x = int(round(float(pt["x"]) * width / 100.0))
+            y = int(round(float(pt["y"]) * height / 100.0))
+            x = max(0, min(width - 1, x))
+            y = max(0, min(height - 1, y))
+            points.append([x, y])
+        return np.array(points, dtype=np.int32)
+
+    def _draw_deadzones(self, debug_frame, width, height):
+        deadzones = self.config.get("deadzones", [])
+        for idx, zone in enumerate(deadzones, start=1):
+            poly = self._polygon_to_pixels(zone, width, height)
+            cv2.polylines(debug_frame, [poly], True, (0, 0, 255), 2)
+            cv2.fillPoly(debug_frame, [poly], (0, 0, 80))
+            label_point = tuple(poly[0])
+            cv2.putText(
+                debug_frame,
+                f"DZ{idx}",
+                (label_point[0] + 6, max(20, label_point[1] - 6)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 0, 255),
+                2,
+            )
+
     def process_loop(self):
         self.running = True
 
@@ -364,6 +419,15 @@ class MotionDetector:
                     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
                     thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
                     thresh = cv2.morphologyEx(thresh, cv2.MORPH_DILATE, kernel)
+
+                    frame_h, frame_w = thresh.shape[:2]
+                    deadzones = self.config.get("deadzones", [])
+                    if deadzones:
+                        deadzone_mask = np.ones((frame_h, frame_w), dtype=np.uint8) * 255
+                        for zone in deadzones:
+                            poly = self._polygon_to_pixels(zone, frame_w, frame_h)
+                            cv2.fillPoly(deadzone_mask, [poly], 0)
+                        thresh = cv2.bitwise_and(thresh, deadzone_mask)
 
                     contours, _ = cv2.findContours(
                         thresh,
@@ -419,6 +483,9 @@ class MotionDetector:
                         self.event_detected = False
 
                     if self.debug:
+                        if self.deadzone_overlay_enabled:
+                            self._draw_deadzones(debug_frame, frame_w, frame_h)
+
                         cv2.putText(debug_frame, f"event={self.get_effective_event_status()}", (10, 25),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                         cv2.putText(debug_frame, f"gpio={self.get_gpio_state_label()}", (10, 55),
