@@ -347,6 +347,22 @@ async function fetchDeadzones() {
   renderDeadzoneOverlay();
 }
 
+async function persistDeadzones() {
+  if (!currentCameraId) return false;
+  const res = await fetch('/api/deadzones?camera_id=' + encodeURIComponent(currentCameraId), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({deadzones})
+  });
+  const data = await res.json();
+  if (data.error) {
+    alert(data.error);
+    return false;
+  }
+  deadzones = Array.isArray(data.deadzones) ? data.deadzones : deadzones;
+  return true;
+}
+
 function renderDeadzoneList() {
   const list = document.getElementById('deadzoneList');
   list.innerHTML = '';
@@ -357,7 +373,15 @@ function renderDeadzoneList() {
     const btn = document.createElement('button'); btn.className = 'remove danger'; btn.textContent='✕';
     btn.onclick = async () => {
       if (!confirm(`Удалить контур #${idx+1}?`)) return;
-      deadzones.splice(idx,1); renderDeadzoneList(); renderDeadzoneOverlay();
+      deadzones.splice(idx,1);
+      if (!(await persistDeadzones())) {
+        await fetchDeadzones();
+        return;
+      }
+      renderDeadzoneList();
+      renderDeadzoneOverlay();
+      await loadConfig();
+      await fetchStatus();
     };
     item.appendChild(btn);
     list.appendChild(item);
@@ -392,12 +416,7 @@ function startNewContour(){
 
 async function finishDeadzoneSetup() {
   if (!currentCameraId) return;
-  const res = await fetch('/api/deadzones?camera_id=' + encodeURIComponent(currentCameraId), {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({deadzones})
-  });
-  const data = await res.json();
-  if (data.error) return alert(data.error);
-  deadzones = data.deadzones || deadzones;
+  if (!(await persistDeadzones())) return;
   closeDeadzoneSetup();
   await fetchDeadzones();
   await loadConfig();
