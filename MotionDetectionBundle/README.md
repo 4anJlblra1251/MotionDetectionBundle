@@ -65,7 +65,7 @@ motion-detection --update /tmp/motion-detection-rpi4.tar.gz
 ```
 
 `--update` выполняет безопасное обновление:
-- если `/opt/motion-detection` — git-репозиторий, выполняется `git fetch --all --prune` + `git pull --ff-only`;
+- если `/opt/motion-detection` — git-репозиторий, выполняется `git fetch --all --prune` + `git pull --ff-only origin master`;
 - если это bundle-установка без `.git`, передайте путь к tar.gz: `motion-detection --update /path/to/motion-detection-rpi4.tar.gz`;
 - если `motion-detection.service` запущен, он будет остановлен на время обновления и запущен обратно;
 - при наличии обновляются Python-зависимости из `requirements-rpi.txt`.

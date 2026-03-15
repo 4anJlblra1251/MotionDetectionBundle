@@ -114,7 +114,7 @@ run_update() {
   if [[ "\$use_git_update" -eq 1 ]]; then
     log_update "[update] Pulling latest changes from git."
     git -C "\$APP_DIR" fetch --all --prune
-    git -C "\$APP_DIR" pull --ff-only
+    git -C "\$APP_DIR" pull --ff-only origin master
   else
     if [[ ! -f "\$bundle_tarball" ]]; then
       log_update "[update] Bundle file not found: \$bundle_tarball"
