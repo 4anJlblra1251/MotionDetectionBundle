@@ -59,6 +59,11 @@ DEFAULT_CAMERA_CONFIG = {
     "gpio_active_high": True,
     "reconnect_max_attempts": 0,
     "reconnect_retry_interval": 1.0,
+    "ping_retry_interval": 10.0,
+    "ping_timeout_seconds": 1.0,
+    "freeze_check_window_seconds": 60.0,
+    "freeze_check_min_frames": 4,
+    "freeze_static_diff_threshold": 2.0,
     "deadzones": [],
 }
 
