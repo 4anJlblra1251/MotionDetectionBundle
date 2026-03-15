@@ -88,8 +88,15 @@ log_update() {
 }
 
 run_update() {
-  if ! git -C "\$APP_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  local bundle_tarball="\${1:-}"
+  local use_git_update=0
+  if git -C "\$APP_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    use_git_update=1
+  fi
+
+  if [[ "\$use_git_update" -eq 0 && -z "\$bundle_tarball" ]]; then
     log_update "[update] Skip: \$APP_DIR is not a git repository."
+    log_update "[update] For bundle-based install use: motion-detection --update /path/to/motion-detection-rpi4.tar.gz"
     return 1
   fi
 
@@ -104,9 +111,32 @@ run_update() {
 
   trap 'if [[ "\$service_was_active" -eq 1 ]]; then log_update "[update] Restarting \$SERVICE_NAME after failed update."; systemctl start "\$SERVICE_NAME"; fi' ERR
 
-  log_update "[update] Pulling latest changes from git."
-  git -C "\$APP_DIR" fetch --all --prune
-  git -C "\$APP_DIR" pull --ff-only
+  if [[ "\$use_git_update" -eq 1 ]]; then
+    log_update "[update] Pulling latest changes from git."
+    git -C "\$APP_DIR" fetch --all --prune
+    git -C "\$APP_DIR" pull --ff-only
+  else
+    if [[ ! -f "\$bundle_tarball" ]]; then
+      log_update "[update] Bundle file not found: \$bundle_tarball"
+      return 1
+    fi
+
+    local tmp_extract_dir
+    local extracted_dir
+    tmp_extract_dir=\$(mktemp -d)
+    tar -xzf "\$bundle_tarball" -C "\$tmp_extract_dir"
+    extracted_dir=\$(find "\$tmp_extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+
+    if [[ -z "\$extracted_dir" ]]; then
+      log_update "[update] Failed to unpack bundle: \$bundle_tarball"
+      rm -rf "\$tmp_extract_dir"
+      return 1
+    fi
+
+    log_update "[update] Updating sources from bundle: \$bundle_tarball"
+    cp -a "\$extracted_dir"/. "\$APP_DIR"/
+    rm -rf "\$tmp_extract_dir"
+  fi
 
   if [[ -f "\$APP_DIR/requirements-rpi.txt" && -x "\$APP_DIR/.venv/bin/pip" ]]; then
     log_update "[update] Installing Python dependencies."
@@ -130,10 +160,10 @@ for arg in "\$@"; do
 done
 
 if [[ "\$update_requested" -eq 1 ]]; then
-  if [[ "\${#forwarded_args[@]}" -gt 0 ]]; then
-    log_update "[update] Ignoring extra args during update: \${forwarded_args[*]}"
+  if [[ "\${#forwarded_args[@]}" -gt 1 ]]; then
+    log_update "[update] Ignoring extra args during update: \${forwarded_args[*]:1}"
   fi
-  run_update
+  run_update "\${forwarded_args[0]:-}"
   exit \$?
 fi
 
