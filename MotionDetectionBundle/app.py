@@ -59,6 +59,7 @@ DEFAULT_CAMERA_CONFIG = {
     "gpio_active_high": True,
     "reconnect_max_attempts": 0,
     "reconnect_retry_interval": 1.0,
+    "deadzones": [],
 }
 
 
@@ -392,6 +393,50 @@ def config():
     if not ok:
         return jsonify({"error": "camera not found"}), 404
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/deadzones", methods=["GET", "POST"])
+def deadzones_api():
+    camera_id = request.args.get("camera_id") or manager.get_active_camera_id()
+    if not camera_id:
+        return jsonify({"error": "no cameras configured"}), 404
+
+    camera = manager.get_camera(camera_id)
+    if camera is None:
+        return jsonify({"error": "camera not found"}), 404
+
+    if request.method == "GET":
+        return jsonify({"deadzones": camera["config"].get("deadzones", [])})
+
+    payload = request.json or {}
+    deadzones = payload.get("deadzones")
+    if not isinstance(deadzones, list):
+        return jsonify({"error": "deadzones must be a list"}), 400
+
+    detector = manager.get_detector(camera_id)
+    if detector is None:
+        return jsonify({"error": "camera not found"}), 404
+
+    normalized = detector.normalize_deadzones(deadzones)
+    new_config = {**camera["config"], "deadzones": normalized}
+    ok = manager.update_camera_config(camera_id, new_config)
+    if not ok:
+        return jsonify({"error": "camera not found"}), 404
+
+    return jsonify({"status": "ok", "deadzones": normalized})
+
+
+@app.route("/api/deadzones/display", methods=["POST"])
+def deadzones_display_api():
+    payload = request.json or {}
+    camera_id = payload.get("camera_id") or manager.get_active_camera_id()
+    enabled = bool(payload.get("enabled", True))
+    detector = manager.get_detector(camera_id)
+    if detector is None:
+        return jsonify({"error": "camera not found"}), 404
+
+    detector.set_deadzone_overlay(enabled)
+    return jsonify({"status": "ok", "enabled": enabled, "camera_id": camera_id})
 
 
 @app.route("/api/test_mode", methods=["POST"])

@@ -7,30 +7,44 @@
     :root { --bg:#0f172a; --card:#111827; --card2:#1e293b; --text:#e5e7eb; --muted:#94a3b8; --accent:#22c55e; --accent2:#38bdf8; --danger:#ef4444; --warning:#f59e0b; --border:#334155; }
     body { font-family:Arial,sans-serif; margin:0; padding:20px; background:var(--bg); color:var(--text); }
     h1 { margin:0 0 12px 0; }
-    .tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+    .tabs,.menu-tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
     .tab-wrap { display:flex; align-items:center; gap:6px; }
     .tab { padding:8px 12px; border:1px solid var(--border); border-radius:999px; cursor:pointer; background:#0b1220; color:var(--text); }
     .tab.active { background:var(--accent2); color:#08111d; font-weight:bold; }
     .tab-delete { width:auto; margin-top:0; padding:8px 10px; background:var(--danger); color:white; border-radius:999px; }
-    .layout { display:grid; grid-template-columns:2fr 1fr; gap:20px; align-items:start; }
+    .layout, .setup-layout { display:grid; grid-template-columns:2fr 1fr; gap:20px; align-items:start; }
     .card { background:linear-gradient(180deg,var(--card),var(--card2)); border:1px solid var(--border); border-radius:14px; padding:16px; }
-    img { width:100%; border-radius:12px; border:1px solid var(--border); background:black; }
+    img { width:100%; border-radius:12px; border:1px solid var(--border); background:black; display:block; }
+    .video-wrap { position:relative; }
+    #deadzoneOverlay,#debugOverlay { position:absolute; inset:0; pointer-events:none; }
+    #deadzoneOverlay.interactive { pointer-events:auto; }
     .status-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; }
     .status-item { border:1px solid var(--border); border-radius:10px; padding:10px; }
     .label { color:var(--muted); font-size:13px; margin-bottom:6px; }
     .value { font-size:15px; font-weight:bold; word-break:break-word; }
-    .green{color:var(--accent);} .red{color:var(--danger);} .yellow{color:var(--warning);} .blue{color:var(--accent2);}
+    .green{color:var(--accent);} .red{color:var(--danger);} .yellow{color:var(--warning);} .blue{color:var(--accent2);} .muted{color:var(--muted);}
     input, select, button { margin-top:6px; padding:10px; font-size:14px; width:100%; box-sizing:border-box; border-radius:10px; border:1px solid var(--border); background:#0b1220; color:var(--text); }
     button { cursor:pointer; background:var(--accent2); color:#08111d; font-weight:bold; border:none; }
+    .danger { background:var(--danger); color:white; }
+    .warning { background:var(--warning); color:#1f1400; }
     pre { background:#020617; color:#d1fae5; padding:12px; font-size:13px; overflow:auto; min-height:220px; border-radius:12px; border:1px solid var(--border); }
     .inline { display:flex; gap:8px; }
-    .settings-hidden { display:none; }
+    .settings-hidden,.hidden { display:none; }
     .hint { color: var(--muted); margin:8px 0 0 0; font-size:13px; }
+    .deadzone-item { border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; }
+    .deadzone-item .remove { opacity:0; transition:opacity .2s; width:auto; padding:6px 8px; margin:0; }
+    .deadzone-item:hover .remove { opacity:1; }
+    .boundary-hit { box-shadow: 0 0 0 3px rgba(245,158,11,.9) inset, 0 0 20px rgba(245,158,11,.9); }
   </style>
 </head>
 <body>
   <h1>{{ 'Motion Detection: Setup' if setup_mode else 'Motion Detection: Debug' }}</h1>
   <div class="tabs" id="cameraTabs"></div>
+
+  <div class="menu-tabs">
+    <button class="tab active" id="debugTabBtn" onclick="switchMenuTab('debug')">Debug</button>
+    <button class="tab" id="deadzoneTabBtn" onclick="switchMenuTab('deadzone')">Deadzone</button>
+  </div>
 
   {% if setup_mode %}
   <div class="card" style="margin-bottom:16px;">
@@ -42,56 +56,94 @@
   </div>
   {% endif %}
 
-  <div class="layout">
-    <div class="card">
-      <h2>{{ 'Video' if debug_mode else 'Stream disabled in Setup mode' }}</h2>
-      {% if debug_mode %}
-      <label for="mode">Display mode</label>
-      <select id="mode" onchange="updateVideoMode()">
-        <option value="debug">DEBUG</option>
-        <option value="raw">RAW</option>
-        <option value="mask">MASK</option>
-        <option value="thresh">THRESH</option>
-      </select>
-      <br><br>
-      <img id="video" src="" alt="video stream">
-      {% else %}
-      <p class="hint">В режиме Setup поток видео отключён. Переключитесь в Debug для просмотра стрима.</p>
-      {% endif %}
-      <div class="status-grid">
-        <div class="status-item"><div class="label">Time</div><div class="value" id="current_time">-</div></div>
-        <div class="status-item"><div class="label">RTSP</div><div class="value blue" id="rtsp_url">-</div></div>
-        <div class="status-item"><div class="label">Camera link</div><div class="value" id="camera_connected">-</div></div>
-        <div class="status-item"><div class="label">GPIO enabled</div><div class="value" id="gpio_enabled_status">-</div></div>
-        <div class="status-item"><div class="label">GPIO state</div><div class="value" id="gpio_state">-</div></div>
-        <div class="status-item"><div class="label">Event status</div><div class="value" id="event_status">-</div></div>
-        <div class="status-item"><div class="label">Event detection</div><div class="value" id="event_detection_enabled">-</div></div>
-        <div class="status-item"><div class="label">Last event time</div><div class="value" id="last_event_time">-</div></div>
+  <div id="debugSection">
+    <div class="layout">
+      <div class="card">
+        <h2>{{ 'Video' if debug_mode else 'Stream disabled in Setup mode' }}</h2>
+        {% if debug_mode %}
+        <label for="mode">Display mode</label>
+        <select id="mode" onchange="updateVideoMode()">
+          <option value="debug">DEBUG</option>
+          <option value="raw">RAW</option>
+          <option value="mask">MASK</option>
+          <option value="thresh">THRESH</option>
+        </select>
+        <label><input id="show_deadzones_toggle" type="checkbox" style="width:auto;" checked onchange="toggleDeadzonesOverlay()"> Show deadzones overlay</label>
+        <br><br>
+        <div class="video-wrap" id="debugVideoWrap">
+          <img id="video" src="" alt="video stream">
+          <svg id="debugOverlay"></svg>
+        </div>
+        {% else %}
+        <p class="hint">В режиме Setup поток видео отключён. Переключитесь в Debug для просмотра стрима.</p>
+        {% endif %}
+        <div class="status-grid">
+          <div class="status-item"><div class="label">Time</div><div class="value" id="current_time">-</div></div>
+          <div class="status-item"><div class="label">RTSP</div><div class="value blue" id="rtsp_url">-</div></div>
+          <div class="status-item"><div class="label">Camera link</div><div class="value" id="camera_connected">-</div></div>
+          <div class="status-item"><div class="label">GPIO enabled</div><div class="value" id="gpio_enabled_status">-</div></div>
+          <div class="status-item"><div class="label">GPIO state</div><div class="value" id="gpio_state">-</div></div>
+          <div class="status-item"><div class="label">Event status</div><div class="value" id="event_status">-</div></div>
+          <div class="status-item"><div class="label">Event detection</div><div class="value" id="event_detection_enabled">-</div></div>
+          <div class="status-item"><div class="label">Last event time</div><div class="value" id="last_event_time">-</div></div>
+        </div>
+        <p class="hint">Нажмите <b>P</b>, чтобы открыть/скрыть панель настроек.</p>
       </div>
-      <p class="hint">Нажмите <b>P</b>, чтобы открыть/скрыть панель настроек.</p>
+
+      <div class="card settings-hidden" id="settingsCard">
+        <h2>Settings</h2>
+        <label>RTSP URL <input id="rtsp_url_input" type="text"></label>
+        <label>Min area <input id="min_area" type="number"></label>
+        <label>Motion frames threshold <input id="motion_frames_threshold" type="number"></label>
+        <label>Var threshold <input id="var_threshold" type="number"></label>
+        <label>Event delay (sec) <input id="event_delay" type="number"></label>
+        <label>Blur kernel <input id="blur_kernel" type="number"></label>
+        <label>Reconnect attempts (0 = infinite) <input id="reconnect_max_attempts" type="number" min="0"></label>
+        <label>Reconnect poll interval (sec) <input id="reconnect_retry_interval" type="number" step="0.1" min="0.1"></label>
+        <label><input id="gpio_enabled" type="checkbox" style="width:auto;"> Enable GPIO output</label>
+        <label>GPIO pin (BCM) <input id="gpio_pin" type="number"></label>
+        <label>GPIO hold seconds <input id="gpio_hold_seconds" type="number" step="0.1"></label>
+        <button onclick="saveConfig()">Save config</button>
+        <button onclick="loadConfig()">Reload config</button>
+      </div>
     </div>
 
-    <div class="card settings-hidden" id="settingsCard">
-      <h2>Settings</h2>
-      <label>RTSP URL <input id="rtsp_url_input" type="text"></label>
-      <label>Min area <input id="min_area" type="number"></label>
-      <label>Motion frames threshold <input id="motion_frames_threshold" type="number"></label>
-      <label>Var threshold <input id="var_threshold" type="number"></label>
-      <label>Event delay (sec) <input id="event_delay" type="number"></label>
-      <label>Blur kernel <input id="blur_kernel" type="number"></label>
-      <label>Reconnect attempts (0 = infinite) <input id="reconnect_max_attempts" type="number" min="0"></label>
-      <label>Reconnect poll interval (sec) <input id="reconnect_retry_interval" type="number" step="0.1" min="0.1"></label>
-      <label><input id="gpio_enabled" type="checkbox" style="width:auto;"> Enable GPIO output</label>
-      <label>GPIO pin (BCM) <input id="gpio_pin" type="number"></label>
-      <label>GPIO hold seconds <input id="gpio_hold_seconds" type="number" step="0.1"></label>
-      <button onclick="saveConfig()">Save config</button>
-      <button onclick="loadConfig()">Reload config</button>
+    <div class="card" style="margin-top:16px;">
+      <h2>Logs</h2>
+      <pre id="logs">...</pre>
     </div>
   </div>
 
-  <div class="card" style="margin-top:20px;">
-    <h2>Logs</h2>
-    <pre id="logs">loading...</pre>
+  <div id="deadzoneSection" class="hidden">
+    <div class="card" id="deadzoneListCard">
+      <h2>Deadzone contours</h2>
+      <div id="deadzoneIntersectWarning" class="hint red"></div>
+      <div id="deadzoneList"></div>
+      <button onclick="openDeadzoneSetup()" {{ 'disabled' if not debug_mode else '' }}>Setup deadzone</button>
+      {% if not debug_mode %}
+      <p class="hint">Настройка deadzone доступна только в режиме Debug.</p>
+      {% endif %}
+    </div>
+
+    <div id="deadzoneSetupView" class="card hidden" style="margin-top:16px;">
+      <div class="setup-layout">
+        <div>
+          <h2>Deadzone setup</h2>
+          <div class="video-wrap" id="setupVideoWrap">
+            <img id="setupVideo" src="" alt="setup stream">
+            <svg id="deadzoneOverlay" class="interactive"></svg>
+          </div>
+        </div>
+        <div>
+          <h3>Menu</h3>
+          <p class="hint">Клик по видео добавляет точки. После 4-й точки контур замыкается автоматически.</p>
+          <button id="addPointBtn" onclick="enableAddPointMode()" disabled>Add point</button>
+          <button class="warning" onclick="startNewContour()">Start new contour</button>
+          <button class="danger" onclick="closeDeadzoneSetup()">Cancel</button>
+          <button style="margin-top:24px;" onclick="finishDeadzoneSetup()">Finish setup</button>
+        </div>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -99,28 +151,33 @@ const setupMode = {{ 'true' if setup_mode else 'false' }};
 const debugMode = {{ 'true' if debug_mode else 'false' }};
 let currentCameraId = null;
 let cameras = [];
+let currentMenuTab = 'debug';
+let deadzones = [];
+let setupDraftPoints = [];
+let selectedContourIndex = -1;
+let addPointMode = false;
+let draggingPoint = null;
+
+function switchMenuTab(tab) {
+  currentMenuTab = tab;
+  document.getElementById('debugSection').classList.toggle('hidden', tab !== 'debug');
+  document.getElementById('deadzoneSection').classList.toggle('hidden', tab !== 'deadzone');
+  document.getElementById('debugTabBtn').classList.toggle('active', tab === 'debug');
+  document.getElementById('deadzoneTabBtn').classList.toggle('active', tab === 'deadzone');
+}
+
+function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
 
 function toggleSettingsPanel(forceVisible = null) {
   const card = document.getElementById('settingsCard');
   if (!card) return;
-
-  if (forceVisible === true) {
-    card.classList.remove('settings-hidden');
-    return;
-  }
-
-  if (forceVisible === false) {
-    card.classList.add('settings-hidden');
-    return;
-  }
-
+  if (forceVisible === true) return card.classList.remove('settings-hidden');
+  if (forceVisible === false) return card.classList.add('settings-hidden');
   card.classList.toggle('settings-hidden');
 }
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'p' || event.key === 'P') {
-    toggleSettingsPanel();
-  }
+  if (event.key === 'p' || event.key === 'P') toggleSettingsPanel();
 });
 
 function resetStatus() {
@@ -142,16 +199,13 @@ async function fetchCameras() {
   cameras = data.cameras || [];
 
   if (!currentCameraId) currentCameraId = data.active_camera;
-  if (!cameras.find(c => c.id === currentCameraId)) {
-    currentCameraId = cameras.length ? cameras[0].id : null;
-  }
+  if (!cameras.find(c => c.id === currentCameraId)) currentCameraId = cameras.length ? cameras[0].id : null;
 
   const tabs = document.getElementById('cameraTabs');
   tabs.innerHTML = '';
   cameras.forEach(camera => {
     const wrap = document.createElement('div');
     wrap.className = 'tab-wrap';
-
     const btn = document.createElement('button');
     btn.className = 'tab' + (camera.id === currentCameraId ? ' active' : '');
     btn.textContent = camera.name;
@@ -166,16 +220,12 @@ async function fetchCameras() {
       delBtn.onclick = async () => removeCamera(camera.id, camera.name);
       wrap.appendChild(delBtn);
     }
-
     tabs.appendChild(wrap);
   });
 
   if (!currentCameraId) {
     resetStatus();
-    if (debugMode) {
-      const video = document.getElementById('video');
-      if (video) video.src = '';
-    }
+    if (debugMode) document.getElementById('video').src = '';
   }
 }
 
@@ -189,47 +239,28 @@ async function switchCamera(cameraId) {
   updateVideoMode();
   await loadConfig();
   await fetchStatus();
+  await fetchDeadzones();
   await fetchCameras();
 }
 
 async function fetchStatus() {
-  if (!currentCameraId) {
-    resetStatus();
-    return;
-  }
-
+  if (!currentCameraId) return resetStatus();
   const res = await fetch('/api/status?camera_id=' + encodeURIComponent(currentCameraId));
   const data = await res.json();
-  if (data.error) {
-    resetStatus();
-    return;
-  }
+  if (data.error) return resetStatus();
 
   document.getElementById('current_time').textContent = data.current_time;
   document.getElementById('rtsp_url').textContent = data.rtsp_url;
-
-  const cameraConnectedLabel = data.camera_connected ? 'ONLINE' : 'OFFLINE';
-  document.getElementById('camera_connected').textContent = cameraConnectedLabel;
+  document.getElementById('camera_connected').textContent = data.camera_connected ? 'ONLINE' : 'OFFLINE';
   document.getElementById('camera_connected').className = 'value ' + (data.camera_connected ? 'green' : 'red');
-
   document.getElementById('gpio_enabled_status').textContent = data.gpio_enabled ? 'ENABLED' : 'DISABLED';
   document.getElementById('gpio_enabled_status').className = 'value ' + (data.gpio_enabled ? 'green' : 'yellow');
-
   document.getElementById('gpio_state').textContent = data.gpio_state;
-  if (data.gpio_state === 'HIGH') {
-    document.getElementById('gpio_state').className = 'value green';
-  } else if (data.gpio_state === 'Safety disabled') {
-    document.getElementById('gpio_state').className = 'value red';
-  } else {
-    document.getElementById('gpio_state').className = 'value yellow';
-  }
-
+  document.getElementById('gpio_state').className = 'value ' + (data.gpio_state === 'HIGH' ? 'green' : (data.gpio_state === 'Safety disabled' ? 'red' : 'yellow'));
   document.getElementById('event_status').textContent = data.event_status ? 'TRUE' : 'FALSE';
   document.getElementById('event_status').className = 'value ' + (data.event_status ? 'green' : 'red');
-
   document.getElementById('event_detection_enabled').textContent = data.event_detection_enabled ? 'ENABLED' : 'SAFETY DISABLED';
   document.getElementById('event_detection_enabled').className = 'value ' + (data.event_detection_enabled ? 'green' : 'red');
-
   document.getElementById('last_event_time').textContent = data.last_event_time;
   document.getElementById('logs').textContent = (data.logs || []).join('\n');
 }
@@ -239,7 +270,6 @@ async function loadConfig() {
   const res = await fetch('/api/config?camera_id=' + encodeURIComponent(currentCameraId));
   const data = await res.json();
   if (data.error) return;
-
   document.getElementById('rtsp_url_input').value = data.rtsp_url;
   document.getElementById('min_area').value = data.min_area;
   document.getElementById('motion_frames_threshold').value = data.motion_frames_threshold;
@@ -267,50 +297,32 @@ async function saveConfig() {
     gpio_enabled: document.getElementById('gpio_enabled').checked,
     gpio_pin: parseInt(document.getElementById('gpio_pin').value, 10),
     gpio_hold_seconds: parseFloat(document.getElementById('gpio_hold_seconds').value),
-    gpio_active_high: true
+    gpio_active_high: true,
+    deadzones
   };
 
   const res = await fetch('/api/config?camera_id=' + encodeURIComponent(currentCameraId), {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
   });
-  const data = await res.json();
-  alert('Saved: ' + JSON.stringify(data));
+  alert('Saved: ' + JSON.stringify(await res.json()));
 }
 
 async function addCamera() {
   const name = document.getElementById('new_camera_name').value.trim();
-  const res = await fetch('/api/cameras', {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name })
-  });
+  const res = await fetch('/api/cameras', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name })});
   const data = await res.json();
-  if (data.error) {
-    alert(data.error);
-    return;
-  }
-  currentCameraId = data.id;
-  await fetchCameras();
-  await switchCamera(currentCameraId);
+  if (data.error) return alert(data.error);
+  currentCameraId = data.id; await fetchCameras(); await switchCamera(currentCameraId);
 }
 
 async function removeCamera(cameraId, cameraName) {
-  if (!setupMode) return;
-  if (!confirm(`Удалить камеру "${cameraName}"?`)) return;
-
+  if (!setupMode || !confirm(`Удалить камеру "${cameraName}"?`)) return;
   const res = await fetch('/api/cameras/' + encodeURIComponent(cameraId), { method: 'DELETE' });
   const data = await res.json();
-  if (data.error) {
-    alert(data.error);
-    return;
-  }
-
+  if (data.error) return alert(data.error);
   currentCameraId = data.active_camera || null;
   await fetchCameras();
-  if (currentCameraId) {
-    await switchCamera(currentCameraId);
-  } else {
-    resetStatus();
-    updateVideoMode();
-  }
+  if (currentCameraId) await switchCamera(currentCameraId); else { resetStatus(); updateVideoMode(); }
 }
 
 function updateVideoMode() {
@@ -318,19 +330,189 @@ function updateVideoMode() {
   const video = document.getElementById('video');
   const modeControl = document.getElementById('mode');
   if (!video || !modeControl) return;
+  video.src = currentCameraId ? '/video?camera_id=' + encodeURIComponent(currentCameraId) + '&mode=' + modeControl.value + '&_ts=' + Date.now() : '';
+}
 
-  if (!currentCameraId) {
-    video.src = '';
-    return;
+async function toggleDeadzonesOverlay(){
+  if (!currentCameraId) return;
+  const enabled = document.getElementById('show_deadzones_toggle').checked;
+  await fetch('/api/deadzones/display', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({camera_id:currentCameraId, enabled})});
+}
+
+async function fetchDeadzones() {
+  if (!currentCameraId) return;
+  const res = await fetch('/api/deadzones?camera_id=' + encodeURIComponent(currentCameraId));
+  const data = await res.json();
+  deadzones = Array.isArray(data.deadzones) ? data.deadzones : [];
+  renderDeadzoneList();
+  renderDeadzoneOverlay();
+}
+
+function renderDeadzoneList() {
+  const list = document.getElementById('deadzoneList');
+  list.innerHTML = '';
+  if (!deadzones.length) list.innerHTML = '<p class="hint">Список пуст.</p>';
+  deadzones.forEach((dz, idx) => {
+    const item = document.createElement('div'); item.className = 'deadzone-item';
+    item.innerHTML = `<div>#${idx+1} • ${dz.length} points</div>`;
+    const btn = document.createElement('button'); btn.className = 'remove danger'; btn.textContent='✕';
+    btn.onclick = async () => {
+      if (!confirm(`Удалить контур #${idx+1}?`)) return;
+      deadzones.splice(idx,1); renderDeadzoneList(); renderDeadzoneOverlay();
+    };
+    item.appendChild(btn);
+    list.appendChild(item);
+  });
+  document.getElementById('addPointBtn').disabled = selectedContourIndex < 0;
+  document.getElementById('deadzoneIntersectWarning').textContent = hasContourIntersections() ? 'Есть пересечение контуров deadzone.' : '';
+}
+
+function openDeadzoneSetup() {
+  if (!debugMode) return;
+  document.getElementById('deadzoneSetupView').classList.remove('hidden');
+  const video = document.getElementById('setupVideo');
+  video.src = '/video?camera_id=' + encodeURIComponent(currentCameraId) + '&mode=debug&_ts=' + Date.now();
+  bindDeadzoneEvents();
+  renderDeadzoneOverlay();
+}
+
+function closeDeadzoneSetup() {
+  document.getElementById('deadzoneSetupView').classList.add('hidden');
+  setupDraftPoints = []; selectedContourIndex = -1; addPointMode = false; draggingPoint = null;
+}
+
+function startNewContour(){ setupDraftPoints = []; selectedContourIndex = -1; addPointMode = false; renderDeadzoneOverlay(); }
+function enableAddPointMode(){ if (selectedContourIndex >= 0) addPointMode = true; }
+
+async function finishDeadzoneSetup() {
+  if (!currentCameraId) return;
+  const res = await fetch('/api/deadzones?camera_id=' + encodeURIComponent(currentCameraId), {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({deadzones})
+  });
+  const data = await res.json();
+  if (data.error) return alert(data.error);
+  deadzones = data.deadzones || deadzones;
+  closeDeadzoneSetup();
+  await fetchDeadzones();
+  await loadConfig();
+  await fetchStatus();
+}
+
+function getVideoRelativePoint(evt) {
+  const video = document.getElementById('setupVideo');
+  const rect = video.getBoundingClientRect();
+  const wrap = document.getElementById('setupVideoWrap');
+  let px = evt.clientX - rect.left;
+  let py = evt.clientY - rect.top;
+  const hit = px < 0 || py < 0 || px > rect.width || py > rect.height;
+  px = clamp(px, 0, rect.width); py = clamp(py, 0, rect.height);
+  if (hit) { wrap.classList.add('boundary-hit'); setTimeout(() => wrap.classList.remove('boundary-hit'), 180); }
+  return { x: (px/rect.width)*100, y: (py/rect.height)*100 };
+}
+
+function bindDeadzoneEvents(){
+  const overlay = document.getElementById('deadzoneOverlay');
+  if (overlay.dataset.bound) return;
+  overlay.dataset.bound = '1';
+
+  overlay.addEventListener('click', (evt) => {
+    if (draggingPoint) return;
+    const pt = getVideoRelativePoint(evt);
+    if (addPointMode && selectedContourIndex >= 0) {
+      deadzones[selectedContourIndex].push(pt);
+      addPointMode = false;
+    } else {
+      setupDraftPoints.push(pt);
+      if (setupDraftPoints.length >= 4) {
+        deadzones.push([...setupDraftPoints]);
+        selectedContourIndex = deadzones.length - 1;
+        setupDraftPoints = [];
+      }
+    }
+    renderDeadzoneList();
+    renderDeadzoneOverlay();
+  });
+
+  overlay.addEventListener('mousedown', (evt) => {
+    const t = evt.target;
+    if (!t.dataset || t.dataset.type !== 'point') return;
+    draggingPoint = { contour: parseInt(t.dataset.contour,10), point: parseInt(t.dataset.point,10) };
+  });
+
+  window.addEventListener('mousemove', (evt) => {
+    if (!draggingPoint) return;
+    const pt = getVideoRelativePoint(evt);
+    deadzones[draggingPoint.contour][draggingPoint.point] = pt;
+    renderDeadzoneOverlay();
+    renderDeadzoneList();
+  });
+
+  window.addEventListener('mouseup', () => draggingPoint = null);
+}
+
+function toPixels(p, rect){ return [p.x * rect.width / 100, p.y * rect.height / 100]; }
+function segIntersect(a,b,c,d){
+  const cross = (p1,p2,p3)=>(p2[0]-p1[0])*(p3[1]-p1[1])-(p2[1]-p1[1])*(p3[0]-p1[0]);
+  return (Math.sign(cross(a,b,c)) !== Math.sign(cross(a,b,d))) && (Math.sign(cross(c,d,a)) !== Math.sign(cross(c,d,b)));
+}
+function polyIntersects(p1,p2,rect){
+  for(let i=0;i<p1.length;i++){
+    const a=toPixels(p1[i],rect), b=toPixels(p1[(i+1)%p1.length],rect);
+    for(let j=0;j<p2.length;j++){
+      const c=toPixels(p2[j],rect), d=toPixels(p2[(j+1)%p2.length],rect);
+      if(segIntersect(a,b,c,d)) return true;
+    }
   }
+  return false;
+}
+function hasContourIntersections(){
+  const video = document.getElementById('setupVideo');
+  if (!video || !video.clientWidth) return false;
+  const rect = {width:video.clientWidth,height:video.clientHeight};
+  for(let i=0;i<deadzones.length;i++) for(let j=i+1;j<deadzones.length;j++) if(polyIntersects(deadzones[i],deadzones[j],rect)) return true;
+  return false;
+}
 
-  const mode = modeControl.value;
-  video.src = '/video?camera_id=' + encodeURIComponent(currentCameraId) + '&mode=' + mode + '&_ts=' + Date.now();
+function renderDeadzoneOverlay(){
+  const overlay = document.getElementById('deadzoneOverlay');
+  const video = document.getElementById('setupVideo');
+  if (!overlay || !video) return;
+  overlay.setAttribute('viewBox', `0 0 ${video.clientWidth||1} ${video.clientHeight||1}`);
+  overlay.innerHTML = '';
+  const rect = {width:video.clientWidth||1,height:video.clientHeight||1};
+
+  deadzones.forEach((zone, idx) => {
+    const points = zone.map(p=>`${p.x*rect.width/100},${p.y*rect.height/100}`).join(' ');
+    const poly = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+    poly.setAttribute('points', points); poly.setAttribute('fill','rgba(255,0,0,0.2)'); poly.setAttribute('stroke','#ef4444'); poly.setAttribute('stroke-width','2');
+    poly.addEventListener('click', ()=>{ selectedContourIndex = idx; renderDeadzoneList(); });
+    overlay.appendChild(poly);
+
+    const p0 = zone[0];
+    const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+    label.setAttribute('x', p0.x*rect.width/100+6); label.setAttribute('y', p0.y*rect.height/100-6);
+    label.setAttribute('fill','#fff'); label.textContent = String(idx+1); overlay.appendChild(label);
+
+    zone.forEach((p,pi)=>{
+      const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      c.setAttribute('cx', p.x*rect.width/100); c.setAttribute('cy', p.y*rect.height/100); c.setAttribute('r', 6);
+      c.setAttribute('fill','#fff'); c.setAttribute('stroke','#111'); c.dataset.type='point'; c.dataset.contour=idx; c.dataset.point=pi;
+      overlay.appendChild(c);
+    });
+  });
+
+  if (setupDraftPoints.length) {
+    const draft = document.createElementNS('http://www.w3.org/2000/svg','polyline');
+    draft.setAttribute('points', setupDraftPoints.map(p=>`${p.x*rect.width/100},${p.y*rect.height/100}`).join(' '));
+    draft.setAttribute('fill','none'); draft.setAttribute('stroke','#38bdf8'); draft.setAttribute('stroke-width','2');
+    overlay.appendChild(draft);
+  }
 }
 
 (async function init(){
   await fetchCameras();
   await loadConfig();
+  await fetchDeadzones();
   updateVideoMode();
   await fetchStatus();
   setInterval(fetchStatus, 1000);
