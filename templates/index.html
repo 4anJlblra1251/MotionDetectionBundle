@@ -100,6 +100,11 @@
         <label>Blur kernel <input id="blur_kernel" type="number"></label>
         <label>Reconnect attempts (0 = infinite) <input id="reconnect_max_attempts" type="number" min="0"></label>
         <label>Reconnect poll interval (sec) <input id="reconnect_retry_interval" type="number" step="0.1" min="0.1"></label>
+        <label>Ping interval (sec) <input id="ping_retry_interval" type="number" step="0.1" min="1"></label>
+        <label>Ping timeout (sec) <input id="ping_timeout_seconds" type="number" step="0.1" min="1"></label>
+        <label>Freeze check window (sec) <input id="freeze_check_window_seconds" type="number" step="1" min="10"></label>
+        <label>Freeze check min frames <input id="freeze_check_min_frames" type="number" step="1" min="2"></label>
+        <label>Freeze diff threshold <input id="freeze_static_diff_threshold" type="number" step="0.1" min="0"></label>
         <label><input id="gpio_enabled" type="checkbox" style="width:auto;"> Enable GPIO output</label>
         <label>GPIO pin (BCM) <input id="gpio_pin" type="number"></label>
         <label>GPIO hold seconds <input id="gpio_hold_seconds" type="number" step="0.1"></label>
@@ -277,6 +282,11 @@ async function loadConfig() {
   document.getElementById('blur_kernel').value = data.blur_kernel;
   document.getElementById('reconnect_max_attempts').value = data.reconnect_max_attempts ?? 0;
   document.getElementById('reconnect_retry_interval').value = data.reconnect_retry_interval ?? 1.0;
+  document.getElementById('ping_retry_interval').value = data.ping_retry_interval ?? 10.0;
+  document.getElementById('ping_timeout_seconds').value = data.ping_timeout_seconds ?? 1.0;
+  document.getElementById('freeze_check_window_seconds').value = data.freeze_check_window_seconds ?? 60.0;
+  document.getElementById('freeze_check_min_frames').value = data.freeze_check_min_frames ?? 4;
+  document.getElementById('freeze_static_diff_threshold').value = data.freeze_static_diff_threshold ?? 2.0;
   document.getElementById('gpio_enabled').checked = data.gpio_enabled;
   document.getElementById('gpio_pin').value = data.gpio_pin;
   document.getElementById('gpio_hold_seconds').value = data.gpio_hold_seconds;
@@ -293,6 +303,11 @@ async function saveConfig() {
     blur_kernel: parseInt(document.getElementById('blur_kernel').value, 10),
     reconnect_max_attempts: parseInt(document.getElementById('reconnect_max_attempts').value, 10),
     reconnect_retry_interval: parseFloat(document.getElementById('reconnect_retry_interval').value),
+    ping_retry_interval: parseFloat(document.getElementById('ping_retry_interval').value),
+    ping_timeout_seconds: parseFloat(document.getElementById('ping_timeout_seconds').value),
+    freeze_check_window_seconds: parseFloat(document.getElementById('freeze_check_window_seconds').value),
+    freeze_check_min_frames: parseInt(document.getElementById('freeze_check_min_frames').value, 10),
+    freeze_static_diff_threshold: parseFloat(document.getElementById('freeze_static_diff_threshold').value),
     gpio_enabled: document.getElementById('gpio_enabled').checked,
     gpio_pin: parseInt(document.getElementById('gpio_pin').value, 10),
     gpio_hold_seconds: parseFloat(document.getElementById('gpio_hold_seconds').value),

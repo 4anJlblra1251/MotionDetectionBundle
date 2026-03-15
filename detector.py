@@ -2,6 +2,7 @@ import os
 import contextlib
 import time
 import threading
+import subprocess
 from collections import deque
 from urllib.parse import urlparse
 
@@ -98,6 +99,8 @@ class MotionDetector:
         self.config = {}
         self._primed_frame = None
         self.deadzone_overlay_enabled = True
+        self.frame_signatures = deque(maxlen=1200)
+        self._last_ping_ok = None
 
         self.update_config(config, add_log=False)
 
@@ -358,8 +361,6 @@ class MotionDetector:
                     self.add_log(f"Reconnect success on attempt {attempt}")
                 return True
 
-            self._enter_safety_mode("RTSP open failed")
-
             if max_attempts > 0 and attempt >= max_attempts:
                 self.add_log(f"Reconnect failed after {max_attempts} attempts")
                 time.sleep(retry_interval)
@@ -417,10 +418,78 @@ class MotionDetector:
 
         return self.cap.retrieve()
 
+    def _get_camera_host(self):
+        rtsp_url = os.path.expandvars(self.config.get("rtsp_url", ""))
+        try:
+            parsed = urlparse(rtsp_url)
+            return parsed.hostname
+        except Exception:
+            return None
+
+    def _ping_camera_host(self):
+        host = self._get_camera_host()
+        if not host:
+            return True
+
+        timeout = max(1, int(float(self.config.get("ping_timeout_seconds", 1.0))))
+        with silence_stderr():
+            result = subprocess.run(
+                ["ping", "-c", "1", "-W", str(timeout), host],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        return result.returncode == 0
+
+    def _remember_frame_signature(self, frame):
+        if frame is None:
+            return
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        tiny = cv2.resize(gray, (64, 36), interpolation=cv2.INTER_AREA)
+        self.frame_signatures.append((time.time(), tiny))
+
+    def _is_recent_image_static(self):
+        freeze_window = max(10.0, float(self.config.get("freeze_check_window_seconds", 60.0)))
+        now = time.time()
+        recent = [(ts, img) for ts, img in self.frame_signatures if (now - ts) <= freeze_window]
+
+        min_samples = max(2, int(self.config.get("freeze_check_min_frames", 4)))
+        if len(recent) < min_samples:
+            return False
+
+        max_diff = 0.0
+        prev = recent[0][1]
+        for _, current in recent[1:]:
+            diff = cv2.absdiff(prev, current)
+            max_diff = max(max_diff, float(np.mean(diff)))
+            prev = current
+
+        static_diff_threshold = float(self.config.get("freeze_static_diff_threshold", 2.0))
+        return max_diff <= static_diff_threshold
+
     def process_loop(self):
         self.running = True
+        next_ping_time = 0.0
+        ping_ok = True
 
         while self.running:
+            now = time.time()
+            if now >= next_ping_time:
+                ping_ok = self._ping_camera_host()
+                if self._last_ping_ok is None or self._last_ping_ok != ping_ok:
+                    state = "OK" if ping_ok else "FAILED"
+                    self.add_log(f"Ping {state}")
+                self._last_ping_ok = ping_ok
+                ping_interval = max(1.0, float(self.config.get("ping_retry_interval", 10.0)))
+                next_ping_time = now + ping_interval
+
+                if not ping_ok and self._is_recent_image_static():
+                    self._enter_safety_mode("Ping failed and image is static for the last minute")
+
+            if not ping_ok:
+                time.sleep(0.2)
+                continue
+
             if not self.reconnect_with_limit():
                 continue
 
@@ -428,11 +497,13 @@ class MotionDetector:
                 ret, frame = self._read_latest_frame()
 
                 if not ret or frame is None:
-                    self._enter_safety_mode("Frame read error")
+                    if self._is_recent_image_static():
+                        self._enter_safety_mode("Frame read error and recent image is static")
                     time.sleep(max(0.1, float(self.config.get("reconnect_retry_interval", 1.0))))
                     break
 
                 self._mark_stream_alive()
+                self._remember_frame_signature(frame)
 
                 should_fire_event = False
                 event_log_message = None
