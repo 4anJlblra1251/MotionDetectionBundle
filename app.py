@@ -114,9 +114,7 @@ class MultiCameraManager:
 
         for removed_id in existing_ids - config_ids:
             detector = self.detectors.pop(removed_id)
-            detector.running = False
-            if detector.cap is not None:
-                detector.cap.release()
+            detector.shutdown()
             self.threads.pop(removed_id, None)
 
         for camera in self.config["cameras"]:
