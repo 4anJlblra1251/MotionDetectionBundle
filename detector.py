@@ -43,6 +43,76 @@ except Exception:
     OutputDevice = None
 
 
+_GPIO_REGISTRY_LOCK = threading.Lock()
+_GPIO_REGISTRY = {}
+
+
+def _acquire_shared_gpio(pin: int, active_high: bool, owner_id: str):
+    key = (pin, active_high)
+    with _GPIO_REGISTRY_LOCK:
+        entry = _GPIO_REGISTRY.get(key)
+        if entry is None:
+            device = OutputDevice(
+                pin,
+                active_high=active_high,
+                initial_value=False
+            )
+            entry = {
+                "device": device,
+                "refs": 0,
+                "owners": {},
+            }
+            _GPIO_REGISTRY[key] = entry
+
+        entry["refs"] += 1
+        entry["owners"][owner_id] = False
+        return key, entry["device"]
+
+
+def _apply_shared_gpio_state(gpio_key, owner_id: str, high: bool):
+    with _GPIO_REGISTRY_LOCK:
+        entry = _GPIO_REGISTRY.get(gpio_key)
+        if entry is None:
+            return False
+
+        entry["owners"][owner_id] = bool(high)
+        should_be_high = any(entry["owners"].values())
+
+        if should_be_high:
+            entry["device"].on()
+        else:
+            entry["device"].off()
+    return True
+
+
+def _release_shared_gpio(gpio_key, owner_id: str):
+    with _GPIO_REGISTRY_LOCK:
+        entry = _GPIO_REGISTRY.get(gpio_key)
+        if entry is None:
+            return
+
+        entry["owners"].pop(owner_id, None)
+        entry["refs"] = max(0, entry["refs"] - 1)
+
+        if not entry["owners"]:
+            try:
+                entry["device"].off()
+                entry["device"].close()
+            except Exception:
+                pass
+            _GPIO_REGISTRY.pop(gpio_key, None)
+            return
+
+        should_be_high = any(entry["owners"].values())
+        try:
+            if should_be_high:
+                entry["device"].on()
+            else:
+                entry["device"].off()
+        except Exception:
+            pass
+
+
 try:
     if hasattr(cv2, "setLogLevel") and hasattr(cv2, "LOG_LEVEL_ERROR"):
         cv2.setLogLevel(cv2.LOG_LEVEL_ERROR)
@@ -90,6 +160,8 @@ class MotionDetector:
         self.safety_disabled = False
 
         self.gpio_device = None
+        self.gpio_key = None
+        self.gpio_owner_id = f"{camera_id}:{id(self)}"
         self.gpio_busy = False
         self.gpio_state = "LOW"
         self.test_mode_enabled = False
@@ -146,13 +218,10 @@ class MotionDetector:
         self.init_gpio()
 
     def init_gpio(self):
-        if self.gpio_device is not None:
-            try:
-                self.gpio_device.off()
-                self.gpio_device.close()
-            except Exception:
-                pass
-            self.gpio_device = None
+        if self.gpio_key is not None:
+            _release_shared_gpio(self.gpio_key, self.gpio_owner_id)
+            self.gpio_key = None
+        self.gpio_device = None
 
         self.gpio_state = "LOW"
 
@@ -168,20 +237,17 @@ class MotionDetector:
         active_high = bool(self.config.get("gpio_active_high", True))
 
         try:
-            self.gpio_device = OutputDevice(
-                pin,
-                active_high=active_high,
-                initial_value=False
-            )
-            self.add_log(f"GPIO init: BCM {pin}")
+            self.gpio_key, self.gpio_device = _acquire_shared_gpio(pin, active_high, self.gpio_owner_id)
+            self.add_log(f"GPIO init: BCM {pin} (shared allowed)")
         except Exception as e:
             self.add_log(f"GPIO init error: {e}")
             self.gpio_device = None
+            self.gpio_key = None
 
     def _force_gpio_low(self):
-        if self.gpio_device is not None:
+        if self.gpio_key is not None:
             try:
-                self.gpio_device.off()
+                _apply_shared_gpio_state(self.gpio_key, self.gpio_owner_id, False)
             except Exception:
                 pass
         self.gpio_state = "LOW"
@@ -237,7 +303,7 @@ class MotionDetector:
         def worker():
             self.gpio_busy = True
             try:
-                self.gpio_device.on()
+                _apply_shared_gpio_state(self.gpio_key, self.gpio_owner_id, True)
                 self.gpio_state = "HIGH"
                 self.add_log(f"GPIO HIGH for {hold_seconds:.1f}s")
                 time.sleep(hold_seconds)
@@ -245,7 +311,7 @@ class MotionDetector:
                 self.add_log(f"GPIO runtime error: {e}")
             finally:
                 try:
-                    self.gpio_device.off()
+                    _apply_shared_gpio_state(self.gpio_key, self.gpio_owner_id, False)
                 except Exception:
                     pass
                 self.gpio_state = "LOW"
@@ -295,10 +361,7 @@ class MotionDetector:
             return False
 
         try:
-            if state == "HIGH":
-                self.gpio_device.on()
-            else:
-                self.gpio_device.off()
+            _apply_shared_gpio_state(self.gpio_key, self.gpio_owner_id, state == "HIGH")
             self.gpio_state = state
             self.add_log(f"GPIO forced {state}")
             return True
@@ -660,3 +723,18 @@ class MotionDetector:
                 return None
 
             return jpeg.tobytes()
+
+    def shutdown(self):
+        self.running = False
+        if self.cap is not None:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
+
+        if self.gpio_key is not None:
+            _release_shared_gpio(self.gpio_key, self.gpio_owner_id)
+            self.gpio_key = None
+            self.gpio_device = None
+        self.gpio_state = "LOW"
