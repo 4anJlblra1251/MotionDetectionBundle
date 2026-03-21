@@ -173,6 +173,7 @@ class MotionDetector:
         self.deadzone_overlay_enabled = True
         self.frame_signatures = deque(maxlen=1200)
         self._last_ping_ok = None
+        self.ignore_motion_until = 0.0
 
         self.update_config(config, add_log=False)
 
@@ -299,6 +300,7 @@ class MotionDetector:
             return
 
         hold_seconds = float(self.config.get("gpio_hold_seconds", 3.0))
+        settle_seconds = max(0.0, float(self.config.get("light_settle_seconds", 4.0)))
 
         def worker():
             self.gpio_busy = True
@@ -316,7 +318,17 @@ class MotionDetector:
                     pass
                 self.gpio_state = "LOW"
                 self.gpio_busy = False
+                with self.lock:
+                    self.ignore_motion_until = time.time() + settle_seconds
+                    if self.fgbg is not None:
+                        self.fgbg = cv2.createBackgroundSubtractorMOG2(
+                            history=700,
+                            varThreshold=int(self.config["var_threshold"]),
+                            detectShadows=False
+                        )
                 self.add_log("GPIO LOW")
+                if settle_seconds > 0:
+                    self.add_log(f"Motion ignored for {settle_seconds:.1f}s while light settles")
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -572,6 +584,48 @@ class MotionDetector:
                 event_log_message = None
 
                 with self.lock:
+                    if time.time() < self.ignore_motion_until:
+                        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                        blur_size = int(self.config["blur_kernel"])
+                        if blur_size % 2 == 0:
+                            blur_size += 1
+                        blur = cv2.GaussianBlur(gray, (blur_size, blur_size), 0)
+                        self.fgbg.apply(blur)
+                        self.motion_frames = 0
+                        self.event_detected = False
+                        if self.debug:
+                            debug_frame = frame.copy()
+                            frame_h, frame_w = frame.shape[:2]
+                            if self.deadzone_overlay_enabled:
+                                self._draw_deadzones(debug_frame, frame_w, frame_h)
+                            remaining = max(0.0, self.ignore_motion_until - time.time())
+                            cv2.putText(
+                                debug_frame,
+                                f"light settle {remaining:.1f}s",
+                                (10, 25),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7,
+                                (0, 165, 255),
+                                2
+                            )
+                            cv2.putText(
+                                debug_frame,
+                                f"gpio={self.get_gpio_state_label()}",
+                                (10, 55),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7,
+                                (0, 255, 255),
+                                2
+                            )
+                            self.last_frame = frame
+                            self.last_debug_frame = debug_frame
+                        else:
+                            self.last_frame = None
+                            self.last_debug_frame = None
+                        self.last_mask = None
+                        self.last_thresh = None
+                        continue
+
                     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
                     blur_size = int(self.config["blur_kernel"])
