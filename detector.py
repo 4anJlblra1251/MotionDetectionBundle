@@ -654,6 +654,35 @@ class MotionDetector:
                             cv2.fillPoly(deadzone_mask, [poly], 0)
                         thresh = cv2.bitwise_and(thresh, deadzone_mask)
 
+                    motion_pixel_ratio = float(np.count_nonzero(thresh)) / float(thresh.size)
+                    max_motion_fill_ratio = float(self.config.get("max_motion_fill_ratio", 0.6))
+                    if max_motion_fill_ratio > 0 and motion_pixel_ratio > max_motion_fill_ratio:
+                        if self.debug:
+                            debug_frame = frame.copy()
+                            cv2.putText(
+                                debug_frame,
+                                f"flash filtered ({motion_pixel_ratio:.2f})",
+                                (10, 25),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7,
+                                (0, 165, 255),
+                                2
+                            )
+                            if self.deadzone_overlay_enabled:
+                                self._draw_deadzones(debug_frame, frame_w, frame_h)
+                            self.last_frame = frame
+                            self.last_debug_frame = debug_frame
+                            self.last_mask = mask
+                            self.last_thresh = thresh
+                        else:
+                            self.last_frame = None
+                            self.last_debug_frame = None
+                            self.last_mask = None
+                            self.last_thresh = None
+                        self.motion_frames = 0
+                        self.event_detected = False
+                        continue
+
                     contours, _ = cv2.findContours(
                         thresh,
                         cv2.RETR_EXTERNAL,

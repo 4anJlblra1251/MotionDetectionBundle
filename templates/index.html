@@ -98,6 +98,8 @@
         <label>Var threshold <input id="var_threshold" type="number"></label>
         <label>Event delay (sec) <input id="event_delay" type="number"></label>
         <label>Blur kernel <input id="blur_kernel" type="number"></label>
+        <label>Ignore motion after GPIO switch (sec) <input id="light_settle_seconds" type="number" step="0.1" min="0"></label>
+        <label>Max detected objects (0 = unlimited) <input id="max_detected_objects" type="number" min="0"></label>
         <label>Reconnect attempts (0 = infinite) <input id="reconnect_max_attempts" type="number" min="0"></label>
         <label>Reconnect poll interval (sec) <input id="reconnect_retry_interval" type="number" step="0.1" min="0.1"></label>
         <label>Ping interval (sec) <input id="ping_retry_interval" type="number" step="0.1" min="1"></label>
@@ -280,6 +282,8 @@ async function loadConfig() {
   document.getElementById('var_threshold').value = data.var_threshold;
   document.getElementById('event_delay').value = data.event_delay;
   document.getElementById('blur_kernel').value = data.blur_kernel;
+  document.getElementById('light_settle_seconds').value = data.light_settle_seconds ?? 4.0;
+  document.getElementById('max_detected_objects').value = data.max_detected_objects ?? 0;
   document.getElementById('reconnect_max_attempts').value = data.reconnect_max_attempts ?? 0;
   document.getElementById('reconnect_retry_interval').value = data.reconnect_retry_interval ?? 1.0;
   document.getElementById('ping_retry_interval').value = data.ping_retry_interval ?? 10.0;
@@ -301,6 +305,8 @@ async function saveConfig() {
     var_threshold: parseInt(document.getElementById('var_threshold').value, 10),
     event_delay: parseInt(document.getElementById('event_delay').value, 10),
     blur_kernel: parseInt(document.getElementById('blur_kernel').value, 10),
+    light_settle_seconds: parseFloat(document.getElementById('light_settle_seconds').value),
+    max_detected_objects: parseInt(document.getElementById('max_detected_objects').value, 10),
     reconnect_max_attempts: parseInt(document.getElementById('reconnect_max_attempts').value, 10),
     reconnect_retry_interval: parseFloat(document.getElementById('reconnect_retry_interval').value),
     ping_retry_interval: parseFloat(document.getElementById('ping_retry_interval').value),
