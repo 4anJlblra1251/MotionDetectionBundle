@@ -143,6 +143,11 @@ run_update() {
     "\$APP_DIR/.venv/bin/pip" install -r "\$APP_DIR/requirements-rpi.txt"
   fi
 
+  if [[ -x "\$APP_DIR/.venv/bin/python" && -f "\$APP_DIR/app.py" ]]; then
+    log_update "[update] Migrating config to latest format."
+    "\$APP_DIR/.venv/bin/python" "\$APP_DIR/app.py" --config "\$CONFIG_PATH" --cfgmigrate
+  fi
+
   log_update "[update] Starting \$SERVICE_NAME after update."
   systemctl start "\$SERVICE_NAME"
   trap - ERR
@@ -150,10 +155,15 @@ run_update() {
 }
 
 update_requested=0
+cfgmigrate_requested=0
 forwarded_args=()
 for arg in "\$@"; do
   if [[ "\$arg" == "--update" ]]; then
     update_requested=1
+    continue
+  fi
+  if [[ "\$arg" == "--cfgmigrate" ]]; then
+    cfgmigrate_requested=1
     continue
   fi
   forwarded_args+=("\$arg")
@@ -165,6 +175,13 @@ if [[ "\$update_requested" -eq 1 ]]; then
   fi
   run_update "\${forwarded_args[0]:-}"
   exit \$?
+fi
+
+if [[ "\$cfgmigrate_requested" -eq 1 ]]; then
+  if [[ "\${#forwarded_args[@]}" -gt 0 ]]; then
+    log_update "[cfgmigrate] Ignoring extra args: \${forwarded_args[*]}"
+  fi
+  exec "\$APP_DIR/.venv/bin/python" "\$APP_DIR/app.py" --config "\$CONFIG_PATH" --cfgmigrate
 fi
 
 exec "\$APP_DIR/.venv/bin/python" "\$APP_DIR/app.py" --config "\$CONFIG_PATH" "\${forwarded_args[@]}"

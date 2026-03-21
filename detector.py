@@ -305,6 +305,7 @@ class MotionDetector:
         def worker():
             self.gpio_busy = True
             try:
+                self._start_ignore_motion_window(settle_seconds, "GPIO HIGH")
                 _apply_shared_gpio_state(self.gpio_key, self.gpio_owner_id, True)
                 self.gpio_state = "HIGH"
                 self.add_log(f"GPIO HIGH for {hold_seconds:.1f}s")
@@ -318,19 +319,22 @@ class MotionDetector:
                     pass
                 self.gpio_state = "LOW"
                 self.gpio_busy = False
-                with self.lock:
-                    self.ignore_motion_until = time.time() + settle_seconds
-                    if self.fgbg is not None:
-                        self.fgbg = cv2.createBackgroundSubtractorMOG2(
-                            history=700,
-                            varThreshold=int(self.config["var_threshold"]),
-                            detectShadows=False
-                        )
+                self._start_ignore_motion_window(settle_seconds, "GPIO LOW")
                 self.add_log("GPIO LOW")
-                if settle_seconds > 0:
-                    self.add_log(f"Motion ignored for {settle_seconds:.1f}s while light settles")
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _start_ignore_motion_window(self, settle_seconds, state_label):
+        with self.lock:
+            self.ignore_motion_until = time.time() + settle_seconds
+            if self.fgbg is not None:
+                self.fgbg = cv2.createBackgroundSubtractorMOG2(
+                    history=700,
+                    varThreshold=int(self.config["var_threshold"]),
+                    detectShadows=False
+                )
+        if settle_seconds > 0:
+            self.add_log(f"Motion ignored for {settle_seconds:.1f}s after {state_label} transition")
 
     def set_test_mode(self, enabled: bool):
         with self.lock:
@@ -657,8 +661,9 @@ class MotionDetector:
                     )
 
                     debug_frame = frame.copy() if self.debug else None
-                    motion = False
                     max_area = 0
+                    detected_objects = 0
+                    max_detected_objects = int(self.config.get("max_detected_objects", 0))
 
                     for cnt in contours:
                         area = cv2.contourArea(cnt)
@@ -667,7 +672,7 @@ class MotionDetector:
                             max_area = area
 
                         if area > self.config["min_area"]:
-                            motion = True
+                            detected_objects += 1
 
                             if self.debug:
                                 x, y, w, h = cv2.boundingRect(cnt)
@@ -682,6 +687,10 @@ class MotionDetector:
                                     2
                                 )
 
+                    motion = detected_objects > 0 and (
+                        max_detected_objects <= 0 or detected_objects <= max_detected_objects
+                    )
+
                     if motion:
                         self.motion_frames += 1
                     else:
@@ -695,7 +704,7 @@ class MotionDetector:
                         if now - self.last_event_time > self.config["event_delay"]:
                             self.last_event_time = now
                             should_fire_event = True
-                            event_log_message = f"EVENT area={int(max_area)}"
+                            event_log_message = f"EVENT area={int(max_area)} objects={detected_objects}"
 
                     hold_time = float(self.config.get("event_hold_seconds", 3))
                     if self.event_detection_enabled:
@@ -710,6 +719,8 @@ class MotionDetector:
                         cv2.putText(debug_frame, f"event={self.get_effective_event_status()}", (10, 25),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                         cv2.putText(debug_frame, f"gpio={self.get_gpio_state_label()}", (10, 55),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                        cv2.putText(debug_frame, f"objects={detected_objects}", (10, 85),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
                         self.last_frame = frame

@@ -1,5 +1,4 @@
 from flask import Flask, Response, render_template, jsonify, request
-from detector import MotionDetector
 import threading
 import argparse
 import time
@@ -65,6 +64,7 @@ DEFAULT_CAMERA_CONFIG = {
     "freeze_check_min_frames": 4,
     "freeze_static_diff_threshold": 2.0,
     "deadzones": [],
+    "max_detected_objects": 0,
 }
 
 
@@ -83,10 +83,12 @@ class MultiCameraManager:
         if "cameras" in raw:
             cameras = raw.get("cameras", [])
             active = raw.get("active_camera") or (cameras[0]["id"] if cameras else None)
-            return {
+            normalized = {
                 "active_camera": active,
                 "cameras": cameras,
             }
+            changed = normalized != raw
+            return normalized, changed
 
         # Миграция старого формата
         migrated_camera = {
@@ -97,12 +99,48 @@ class MultiCameraManager:
         return {
             "active_camera": "camera-1",
             "cameras": [migrated_camera],
-        }
+        }, True
 
     def _load_config_file(self):
         with open(self.config_path, "r", encoding="utf-8") as f:
             raw = json.load(f)
-        return self._normalize_config(raw)
+        normalized, _ = self._normalize_config(raw)
+        return self._merge_defaults(normalized)
+
+    def _merge_defaults(self, config):
+        merged_cameras = []
+        for camera in config.get("cameras", []):
+            camera_config = {**DEFAULT_CAMERA_CONFIG, **camera.get("config", {})}
+            merged_cameras.append({
+                "id": camera.get("id"),
+                "name": camera.get("name") or camera.get("id") or "Camera",
+                "config": camera_config,
+            })
+
+        active = config.get("active_camera")
+        if merged_cameras and not any(cam["id"] == active for cam in merged_cameras):
+            active = merged_cameras[0]["id"]
+
+        return {
+            "active_camera": active,
+            "cameras": merged_cameras,
+        }
+
+    @classmethod
+    def migrate_config_file(cls, config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+
+        manager = cls.__new__(cls)
+        normalized, changed_from_shape = manager._normalize_config(raw)
+        migrated = manager._merge_defaults(normalized)
+        changed = changed_from_shape or (migrated != raw)
+
+        if changed:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(migrated, f, indent=2, ensure_ascii=False)
+
+        return changed
 
     def _save_config_file(self):
         with open(self.config_path, "w", encoding="utf-8") as f:
@@ -125,6 +163,7 @@ class MultiCameraManager:
                 self.detectors[camera_id].update_config(merged_config)
                 continue
 
+            from detector import MotionDetector
             detector = MotionDetector(camera_id=camera_id, config=merged_config, debug=self.debug)
             self.detectors[camera_id] = detector
             if start_threads:
@@ -698,6 +737,7 @@ def main():
     parser.add_argument("--setup", action="store_true", help="run setup mode with web UI and camera creation")
     parser.add_argument("--override", action="append", help="override env vars: KEY=VALUE")
     parser.add_argument("--hwtest", action="store_true", help="enable hardware test controls in curses UI")
+    parser.add_argument("--cfgmigrate", action="store_true", help="migrate config to latest format and exit")
     parser.add_argument(
         "--config",
         default=os.environ.get("MOTION_DETECTION_CONFIG", "config.json"),
@@ -706,6 +746,14 @@ def main():
     args = parser.parse_args()
 
     apply_overrides(args.override)
+
+    if args.cfgmigrate:
+        changed = MultiCameraManager.migrate_config_file(args.config)
+        if changed:
+            print(f"Config migrated: {args.config}")
+        else:
+            print(f"Config already up to date: {args.config}")
+        return 0
 
     if not acquire_instance_lock():
         return 1
