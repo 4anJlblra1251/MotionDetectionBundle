@@ -55,6 +55,7 @@ DEFAULT_CAMERA_CONFIG = {
     "gpio_enabled": False,
     "gpio_pin": 17,
     "gpio_hold_seconds": 3.0,
+    "light_settle_seconds": 4.0,
     "gpio_active_high": True,
     "reconnect_max_attempts": 0,
     "reconnect_retry_interval": 1.0,
@@ -63,6 +64,7 @@ DEFAULT_CAMERA_CONFIG = {
     "freeze_check_window_seconds": 60.0,
     "freeze_check_min_frames": 4,
     "freeze_static_diff_threshold": 2.0,
+    "max_motion_fill_ratio": 0.6,
     "deadzones": [],
     "max_detected_objects": 0,
 }
