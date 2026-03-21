@@ -60,15 +60,19 @@ sudo journalctl -u motion-detection.service -f
 motion-detection
 motion-detection --debug
 motion-detection --setup
+motion-detection --cfgmigrate
 motion-detection --update
 motion-detection --update /tmp/motion-detection-rpi4.tar.gz
 ```
+
+`--cfgmigrate` выполняет миграцию `/etc/motion-detection/config.json` к актуальному формату (multi-camera + новые поля) и завершает работу без запуска сервиса.
 
 `--update` выполняет безопасное обновление:
 - если `/opt/motion-detection` — git-репозиторий, выполняется `git fetch --all --prune` + `git pull --ff-only origin master`;
 - если это bundle-установка без `.git`, передайте путь к tar.gz: `motion-detection --update /path/to/motion-detection-rpi4.tar.gz`;
 - если `motion-detection.service` запущен, он будет остановлен на время обновления и запущен обратно;
 - при наличии обновляются Python-зависимости из `requirements-rpi.txt`.
+- после обновления автоматически запускается миграция конфига (эквивалент `--cfgmigrate`).
 
 События обновления логируются через `logger` (tag: `motion-detection-update`) и доступны в journald:
 
@@ -84,4 +88,5 @@ sudo journalctl -t motion-detection-update -f
 
 Если прожектор включается по детекции и сам создаёт резкое изменение кадра, используйте параметр:
 
-- `light_settle_seconds` — сколько секунд игнорировать авто-детекцию сразу после выключения GPIO (по умолчанию `4.0`).
+- `light_settle_seconds` — сколько секунд игнорировать авто-детекцию после переключения GPIO (и при включении, и при выключении), по умолчанию `4.0`.
+- `max_detected_objects` — максимальное количество одновременно обнаруженных объектов (контуров выше `min_area`). `0` = без ограничения.
