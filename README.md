@@ -52,17 +52,108 @@ sudo journalctl -u motion-detection.service -f
 - OpenCV на Raspberry Pi берётся из `apt` (`python3-opencv`) для лучшей совместимости ARM.
 - Сервис запускается в `--debug` режиме, поэтому веб-интерфейс доступен постоянно на порту `5000` (например, `http://<raspberry-ip>:5000`).
 
-## 5) Ручной запуск той же логики, что в `app.py`
+## 5) Команды запуска и режимы работы
 
-После установки можно запускать приложение без исходников репозитория:
+После установки можно запускать приложение без исходников репозитория через команду `motion-detection`. Команда всегда использует конфиг `/etc/motion-detection/config.json` и запускает `/opt/motion-detection/app.py` через установленный virtualenv.
+
+### Быстрый выбор режима
+
+| Что нужно сделать | Команда |
+| --- | --- |
+| Запустить обычный консольный режим | `motion-detection` |
+| Запустить веб-интерфейс с видео и отладкой | `motion-detection --debug` |
+| Запустить режим настройки камер | `motion-detection --setup` |
+| Запустить тест GPIO/событий в консоли | `motion-detection --hwtest` |
+| Запустить Debug + тестовые API для GPIO/событий | `motion-detection --debug --hwtest` |
+| Применить переменную окружения на один запуск | `motion-detection --debug --override CAMERA_1_RTSP_PASSWORD=secret` |
+| Использовать другой конфиг | `motion-detection --config /path/to/config.json --debug` |
+| Мигрировать конфиг и выйти | `motion-detection --cfgmigrate` |
+| Обновить git-установку | `motion-detection --update` |
+| Обновить bundle-установку из архива | `motion-detection --update /tmp/motion-detection-rpi4.tar.gz` |
+
+### Обычный консольный режим
 
 ```bash
 motion-detection
+```
+
+Используйте этот режим, если нужен локальный экран состояния в терминале без веб-видео. В консоли доступны обзор камер, состояние GPIO, последние события и логи.
+
+Горячие клавиши:
+- `TAB` — переключение между обзором и выбранной камерой;
+- `←` / `→` — выбор камеры;
+- `P` — открыть или закрыть панель настроек;
+- `Q` — выход.
+
+### Debug-режим с веб-интерфейсом
+
+```bash
 motion-detection --debug
+```
+
+После запуска откройте в браузере:
+
+```text
+http://<raspberry-ip>:5000
+```
+
+В этом режиме доступны видеопоток, диагностические режимы `DEBUG`, `RAW`, `MASK`, `THRESH`, статус детекции, логи, настройки камеры и настройка deadzone-зон.
+
+### Setup-режим для добавления и удаления камер
+
+```bash
 motion-detection --setup
+```
+
+После запуска откройте:
+
+```text
+http://<raspberry-ip>:5000
+```
+
+В Setup-режиме можно добавлять и удалять камеры. Видеопоток в этом режиме отключён; для просмотра картинки и настройки deadzone используйте `motion-detection --debug`.
+
+### Hardware test-режим
+
+```bash
+motion-detection --hwtest
+```
+
+Этот режим добавляет в консоль вкладку тестирования. Он нужен для проверки GPIO и логики событий без сохранения временных изменений в `config.json`.
+
+Горячие клавиши тестового режима:
+- `M` — открыть вкладку Test;
+- `T` — включить или выключить Test mode;
+- `A` — включить или выключить авто-детекцию, доступно только при включённом Test mode;
+- `G` — вручную переключить GPIO `HIGH`/`LOW`, доступно только при включённом Test mode;
+- `E` — вручную выставить или снять событие, доступно только при включённом Test mode.
+
+Если нужен веб-интерфейс и тестовые API одновременно, запустите:
+
+```bash
+motion-detection --debug --hwtest
+```
+
+### Запуск с временными переменными окружения
+
+```bash
+motion-detection --debug --override CAMERA_1_RTSP_PASSWORD=secret
+```
+
+Так удобно передавать пароль камеры, если RTSP URL в конфиге содержит переменную вида `${CAMERA_1_RTSP_PASSWORD}`. Значение применяется только для текущего запуска процесса.
+
+### Запуск с другим конфигом
+
+```bash
+motion-detection --config /path/to/config.json --debug
+```
+
+Эта команда полезна для проверки отдельного тестового конфига без изменения основного `/etc/motion-detection/config.json`.
+
+### Миграция конфига
+
+```bash
 motion-detection --cfgmigrate
-motion-detection --update
-motion-detection --update /tmp/motion-detection-rpi4.tar.gz
 ```
 
 `--cfgmigrate` выполняет миграцию `/etc/motion-detection/config.json` к актуальному формату (multi-camera + новые поля) и завершает работу без запуска сервиса.
@@ -80,7 +171,7 @@ motion-detection --update /tmp/motion-detection-rpi4.tar.gz
 sudo journalctl -t motion-detection-update -f
 ```
 
-Эта команда запускает `/opt/motion-detection/app.py` через установленный venv и всегда использует конфиг из `/etc/motion-detection/config.json`.
+`motion-detection` запускает `/opt/motion-detection/app.py` через установленный venv и по умолчанию использует конфиг из `/etc/motion-detection/config.json`.
 
 > Защита от дублей: одновременно разрешён только один экземпляр процесса (через lock-файл). Если сервис уже запущен, повторный `motion-detection` не создаст второй процесс — вместо этого используйте веб-интерфейс `http://<raspberry-ip>:5000`.
 
